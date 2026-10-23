@@ -1,4 +1,8 @@
-import { assertUuid, type IpAddress, type Uuid } from './auth.types.js';
+import {
+  assertUuid,
+  type IpAddress,
+  type Uuid,
+} from '../../../../shared/types/domain.types.js';
 
 export interface RefreshTokenProps {
   id: Uuid;

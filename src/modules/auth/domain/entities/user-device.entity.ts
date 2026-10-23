@@ -1,5 +1,9 @@
 import { DevicePlatform } from './enums/auth.enums.js';
-import { assertNonEmpty, assertUuid, type Uuid } from './auth.types.js';
+import {
+  assertNonEmpty,
+  assertUuid,
+  type Uuid,
+} from '../../../../shared/types/domain.types.js';
 
 export interface UserDeviceProps {
   id: Uuid;

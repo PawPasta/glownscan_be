@@ -1,6 +1,9 @@
 import { Email } from '../value-objects/email.vo.js';
 import { UserStatus } from './enums/auth.enums.js';
-import { assertUuid, type Uuid } from './auth.types.js';
+import {
+  assertUuid,
+  type Uuid,
+} from '../../../../shared/types/domain.types.js';
 
 export interface UserProps {
   id: Uuid;

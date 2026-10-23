@@ -1,4 +1,7 @@
-import { assertNonEmpty, assertSmallInt } from './auth.types.js';
+import {
+  assertNonEmpty,
+  assertSmallInt,
+} from '../../../../shared/types/domain.types.js';
 
 export interface PermissionProps {
   id: number;

@@ -5,6 +5,9 @@ export class Password {
     if (value.length < 6) {
       throw new Error('Password must contain at least 6 characters.');
     }
+    if (Buffer.byteLength(value, 'utf8') > 72) {
+      throw new Error('Password must not exceed 72 UTF-8 bytes.');
+    }
     if (!/[A-Z]/.test(value)) {
       throw new Error('Password must contain at least one uppercase letter.');
     }

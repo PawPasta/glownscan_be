@@ -6,6 +6,15 @@ export function setupSwagger(app: INestApplication): void {
     .setTitle('GlowScan API')
     .setDescription('API documentation for the GlowScan backend.')
     .setVersion('1.0')
+    .addBearerAuth(
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        in: 'header',
+      },
+      'access-token',
+    )
     .build();
 
   const document = SwaggerModule.createDocument(app, config);

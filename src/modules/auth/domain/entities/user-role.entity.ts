@@ -1,4 +1,8 @@
-import { assertSmallInt, assertUuid, type Uuid } from './auth.types.js';
+import {
+  assertSmallInt,
+  assertUuid,
+  type Uuid,
+} from '../../../../shared/types/domain.types.js';
 
 export interface UserRoleProps {
   id: Uuid;

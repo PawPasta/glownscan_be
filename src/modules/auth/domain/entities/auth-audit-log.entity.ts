@@ -5,7 +5,7 @@ import {
   type IpAddress,
   type JsonObject,
   type Uuid,
-} from './auth.types.js';
+} from '../../../../shared/types/domain.types.js';
 
 export interface AuthAuditLogProps {
   id: number;

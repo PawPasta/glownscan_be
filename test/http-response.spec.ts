@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import { GlobalExceptionFilter } from '../src/shared/handler/global-exception.filter.js';
-import { ConflictException } from '../src/shared/exceptions/http.exceptions.js';
+import { ConflictException } from '../src/shared/handler/http.exceptions.js';
 
 describe('GlobalExceptionFilter', () => {
   it('returns the common envelope and preserves HTTP exception status', () => {

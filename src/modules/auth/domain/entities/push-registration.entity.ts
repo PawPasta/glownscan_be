@@ -1,5 +1,12 @@
-import { PushRegistrationStatus, PushRegistrationType } from './enums/auth.enums.js';
-import { assertNonEmpty, assertUuid, type Uuid } from './auth.types.js';
+import {
+  PushRegistrationStatus,
+  PushRegistrationType,
+} from './enums/auth.enums.js';
+import {
+  assertNonEmpty,
+  assertUuid,
+  type Uuid,
+} from '../../../../shared/types/domain.types.js';
 
 export interface PushRegistrationProps {
   id: Uuid;

@@ -15,6 +15,7 @@ describe('Password', () => {
     ['lowercase', 'GLOW123!'],
     ['number', 'GlowScan!'],
     ['special character', 'Glow1234'],
+    ['a bcrypt-safe UTF-8 length', `${'é'.repeat(35)}Aa1!`],
   ])('rejects a password missing the required %s', (_rule, value) => {
     expect(() => Password.create(value)).toThrow();
   });

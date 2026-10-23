@@ -16,4 +16,3 @@ export { Role } from './role.entity.js';
 export { UserDevice } from './user-device.entity.js';
 export { UserRole } from './user-role.entity.js';
 export { User } from './user.entity.js';
-export type { IpAddress, JsonObject, Uuid } from './auth.types.js';

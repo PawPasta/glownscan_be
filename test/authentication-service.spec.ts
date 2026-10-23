@@ -1,0 +1,220 @@
+import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
+import { Test, type TestingModule } from '@nestjs/testing';
+import { compare, hash } from 'bcryptjs';
+import { vi } from 'vitest';
+import {
+  CHANGE_PASSWORD_PORT,
+  LOGIN_PORT,
+  LOGOUT_PORT,
+  REFRESH_SESSION_PORT,
+  REGISTER_ACCOUNT_PORT,
+  REQUEST_PASSWORD_RESET_PORT,
+  RESEND_VERIFICATION_PORT,
+  RESET_PASSWORD_PORT,
+  VALIDATE_ACCESS_TOKEN_PORT,
+  VERIFY_EMAIL_PORT,
+} from '../src/modules/auth/application/ports/index.js';
+import { AuthenticationService } from '../src/modules/auth/application/use-case/authentication.service.js';
+import { UserStatus } from '../src/modules/auth/domain/entities/enums/auth.enums.js';
+import { SmtpEmailService } from '../src/modules/auth/infrastructure/adapters/smtp-email.service.js';
+import {
+  BadRequestException,
+  ForbiddenException,
+  UnauthorizedException,
+} from '../src/shared/handler/http.exceptions.js';
+
+const userId = '25bdca3a-e978-4bdb-96f3-51fb5b0413bc';
+
+describe('AuthenticationService', () => {
+  let moduleRef: TestingModule;
+  let service: AuthenticationService;
+  let repository: {
+    registerUser: ReturnType<typeof vi.fn>;
+    findUserByEmail: ReturnType<typeof vi.fn>;
+    findUserById: ReturnType<typeof vi.fn>;
+    recordFailedLogin: ReturnType<typeof vi.fn>;
+    clearFailedLogins: ReturnType<typeof vi.fn>;
+    resendVerificationToken: ReturnType<typeof vi.fn>;
+    verifyEmail: ReturnType<typeof vi.fn>;
+    createActionToken: ReturnType<typeof vi.fn>;
+    resetPassword: ReturnType<typeof vi.fn>;
+    changePassword: ReturnType<typeof vi.fn>;
+    createRefreshSession: ReturnType<typeof vi.fn>;
+    rotateRefreshToken: ReturnType<typeof vi.fn>;
+    revokeRefreshToken: ReturnType<typeof vi.fn>;
+  };
+  let emailService: {
+    sendVerificationEmail: ReturnType<typeof vi.fn>;
+    sendPasswordResetEmail: ReturnType<typeof vi.fn>;
+  };
+  let jwt: { signAsync: ReturnType<typeof vi.fn> };
+
+  beforeEach(async () => {
+    repository = {
+      registerUser: vi.fn().mockResolvedValue(undefined),
+      findUserByEmail: vi.fn(),
+      findUserById: vi.fn(),
+      recordFailedLogin: vi.fn().mockResolvedValue(undefined),
+      clearFailedLogins: vi.fn().mockResolvedValue(undefined),
+      resendVerificationToken: vi.fn().mockResolvedValue(undefined),
+      verifyEmail: vi.fn(),
+      createActionToken: vi.fn().mockResolvedValue(undefined),
+      resetPassword: vi.fn(),
+      changePassword: vi.fn(),
+      createRefreshSession: vi.fn().mockResolvedValue(undefined),
+      rotateRefreshToken: vi.fn(),
+      revokeRefreshToken: vi.fn().mockResolvedValue(undefined),
+    };
+    emailService = {
+      sendVerificationEmail: vi.fn().mockResolvedValue(undefined),
+      sendPasswordResetEmail: vi.fn().mockResolvedValue(undefined),
+    };
+    jwt = { signAsync: vi.fn().mockResolvedValue('signed-access-token') };
+
+    moduleRef = await Test.createTestingModule({
+      providers: [
+        AuthenticationService,
+        { provide: REGISTER_ACCOUNT_PORT, useValue: repository },
+        { provide: VERIFY_EMAIL_PORT, useValue: repository },
+        { provide: RESEND_VERIFICATION_PORT, useValue: repository },
+        { provide: LOGIN_PORT, useValue: repository },
+        { provide: REFRESH_SESSION_PORT, useValue: repository },
+        { provide: LOGOUT_PORT, useValue: repository },
+        { provide: REQUEST_PASSWORD_RESET_PORT, useValue: repository },
+        { provide: RESET_PASSWORD_PORT, useValue: repository },
+        { provide: CHANGE_PASSWORD_PORT, useValue: repository },
+        { provide: VALIDATE_ACCESS_TOKEN_PORT, useValue: repository },
+        { provide: SmtpEmailService, useValue: emailService },
+        { provide: JwtService, useValue: jwt },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: (_key: string, defaultValue?: string) => defaultValue,
+          },
+        },
+      ],
+    }).compile();
+    service = moduleRef.get(AuthenticationService);
+  });
+
+  afterEach(async () => {
+    await moduleRef.close();
+  });
+
+  it('rejects registration when password confirmation does not match', async () => {
+    await expect(
+      service.register({
+        email: 'user@example.com',
+        password: 'Glow123!',
+        confirmPassword: 'Different123!',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(repository.registerUser).not.toHaveBeenCalled();
+  });
+
+  it('stores password and verification token hashes before sending email', async () => {
+    await service.register({
+      email: ' User@Example.com ',
+      password: 'Glow123!',
+      confirmPassword: 'Glow123!',
+    });
+
+    const [registration] = repository.registerUser.mock.calls[0] as [
+      {
+        email: string;
+        passwordHash: string;
+        verificationTokenHash: string;
+        tokenExpiresAt: Date;
+      },
+    ];
+    expect(registration.email).toBe('user@example.com');
+    expect(registration.passwordHash).not.toBe('Glow123!');
+    await expect(compare('Glow123!', registration.passwordHash)).resolves.toBe(
+      true,
+    );
+    expect(registration.verificationTokenHash).toMatch(/^[0-9a-f]{64}$/);
+    const [sentEmail, rawToken] =
+      emailService.sendVerificationEmail.mock.calls[0] as [string, string];
+    expect(sentEmail).toBe('user@example.com');
+    expect(rawToken).not.toBe(registration.verificationTokenHash);
+  });
+
+  it('issues access and refresh tokens only for verified active accounts', async () => {
+    repository.findUserByEmail.mockResolvedValue({
+      id: userId,
+      email: 'user@example.com',
+      passwordHash: await hash('Glow123!', 4),
+      status: UserStatus.Active,
+      tokenVersion: 1,
+      roles: ['USER'],
+      failedLoginCount: 0,
+      lockedUntil: null,
+    });
+
+    const result = await service.login(
+      { email: 'user@example.com', password: 'Glow123!' },
+      { ipAddress: null, userAgent: null },
+    );
+
+    expect(result.accessToken).toBe('signed-access-token');
+    expect(result.refreshToken).toHaveLength(43);
+    expect(result.expiresIn).toBe(900);
+    const [session] = repository.createRefreshSession.mock.calls[0] as [
+      { userId: string; tokenHash: string },
+    ];
+    expect(session.userId).toBe(userId);
+    expect(session.tokenHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(session.tokenHash).not.toBe(result.refreshToken);
+  });
+
+  it('records failed login attempts for an existing account', async () => {
+    repository.findUserByEmail.mockResolvedValue({
+      id: userId,
+      email: 'user@example.com',
+      passwordHash: await hash('Glow123!', 4),
+      status: UserStatus.Active,
+      tokenVersion: 1,
+      roles: ['USER'],
+      failedLoginCount: 0,
+      lockedUntil: null,
+    });
+
+    await expect(
+      service.login(
+        { email: 'user@example.com', password: 'Wrong123!' },
+        { ipAddress: null, userAgent: null },
+      ),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(repository.recordFailedLogin).toHaveBeenCalledWith(
+      'user@example.com',
+    );
+  });
+
+  it('refuses login for an account in its lockout period', async () => {
+    repository.findUserByEmail.mockResolvedValue({
+      id: userId,
+      email: 'user@example.com',
+      passwordHash: await hash('Glow123!', 4),
+      status: UserStatus.Locked,
+      tokenVersion: 1,
+      roles: ['USER'],
+      failedLoginCount: 5,
+      lockedUntil: new Date(Date.now() + 60_000),
+    });
+
+    await expect(
+      service.login(
+        { email: 'user@example.com', password: 'Glow123!' },
+        { ipAddress: null, userAgent: null },
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(repository.createRefreshSession).not.toHaveBeenCalled();
+  });
+
+  it('rejects password-reset requests with invalid emails', async () => {
+    await expect(
+      service.requestPasswordReset('not-an-email'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});

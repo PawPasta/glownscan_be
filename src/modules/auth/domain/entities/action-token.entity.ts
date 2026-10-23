@@ -1,5 +1,8 @@
 import { ActionTokenPurpose } from './enums/auth.enums.js';
-import { assertUuid, type Uuid } from './auth.types.js';
+import {
+  assertUuid,
+  type Uuid,
+} from '../../../../shared/types/domain.types.js';
 
 export interface ActionTokenProps {
   id: Uuid;
