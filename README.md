@@ -1,132 +1,167 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# GlowScan Backend
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+GlowScan is a personalized skincare application. This repository contains the backend API intended to support the mobile app and admin dashboard.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+> **Implementation status:** The product flows below describe the planned system behavior. The current NestJS app is still a scaffold: the only registered endpoint is `GET /`, which returns `Hello World!`. The database schema is a design script and is not connected to the running application.
 
-## Description
+## Product flows
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+The backend is planned to support these main user journeys:
 
-## Project setup
+### 1. Account setup and personalization
 
-```bash
-$ npm install
+```text
+Open app
+  → Register or log in
+  → Complete skin assessment
+  → Review and save assessment
+  → View personalized home
 ```
 
-## Compile and run the project
+Account and profile data provide the starting point for a user's skin profile and later recommendations.
 
-```bash
-# development
-$ npm run start
+### 2. Skin analysis and skincare guidance
 
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+```text
+Capture or upload facial image
+  → Validate image and face visibility
+      ├─ Invalid → Explain the issue → Try another image
+      └─ Valid
+          → Analyze observable skin characteristics
+          → Save analysis result
+          → Update skin profile
+          → Show personalized guidance, routine, and product recommendations
 ```
 
-## Run tests
+Analysis history can then be used to review results over time and compare supported skin metrics. Recommendations are intended to use the user's assessment, skin profile, and products in GlowScan's curated catalog.
 
-```bash
-# unit tests
-$ npm run test
+### 3. Routine and progress tracking
 
-# e2e tests
-$ npm run test:e2e
+```text
+Open routine
+  → View morning/evening steps
+  → Check in completed steps
+  → Review routine history
 
-# test coverage
-$ npm run test:cov
+Run a new skin analysis
+  → Add result to analysis history
+  → Compare with an earlier result
+  → Review changes over time
 ```
 
-## Deployment
+### 4. Premium access
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+```text
+View Premium plans
+  → Select a plan
+  → Complete and verify purchase
+      ├─ Not verified → Show status and recovery options
+      └─ Verified → Enable Premium features
+  → View or manage subscription
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+Premium capabilities are planned for advanced analysis, progress insights, and routine features. Purchase processing and verification are not implemented in this repository yet.
 
-## Observability
+### 5. Product catalog administration
 
-In production applications, observability is essential for understanding how your system behaves, detecting issues early, and maintaining reliable performance.
-
-[NestJS Observe](https://observe.nestjs.com) automatically instruments your NestJS application, giving you deep visibility into your system with minimal setup:
-
-- **Distributed tracing:** Follow requests across services and understand how they flow through your system.
-- **Waterfall analysis:** Visualize request execution and identify slow operations, bottlenecks, and unexpected delays.
-- **Performance analysis:** Analyze application performance in real time and quickly pinpoint areas that need optimization.
-- **Metrics:** Track key application and infrastructure metrics to understand system health and performance trends.
-- **Logging:** Centralize and correlate logs with traces and other telemetry to make debugging easier.
-- **Error tracking:** Detect errors quickly and investigate their root causes with the surrounding context.
-- **SLA monitoring:** Track service-level objectives and identify when your application is approaching or exceeding defined thresholds.
-- **Alarms and alerts:** Set up alerts for critical errors, performance degradation, SLA violations, and other anomalies so your team can react quickly.
-
-To add it to this project, run this and approve the code it prints at [observe.nestjs.com/link](https://observe.nestjs.com/link) - signing up for free if you have no account:
-
-```bash
-$ npx @nestjs/observe link
+```text
+Admin signs in
+  → Manage products and availability
+  → Maintain ingredients, skin types, and skin concerns
+  → Associate catalog products with relevant skin data
+  → Maintain affiliate links
 ```
 
-It installs `@nestjs/observe`, wires it into `AppModule` and `main.ts`, and writes the app key and secret into `.env`, which every `nest start` script (`start`, `start:dev`, `start:debug`) then loads. In production, set `OBSERVE_APP_KEY` and `OBSERVE_APP_SECRET` in the environment instead.
+The curated catalog is intended to supply product recommendations to users. Purchases through affiliate links take place on external marketplaces, not in GlowScan.
 
-Or do it by hand:
+## Flow and requirements diagrams
+
+- [Screen flow](docs/diagram/GlowScan_Diagram-Screen%20Flow.drawio.png) — client navigation across user and admin screens.
+- [Use case diagram](docs/diagram/GlowScan_Diagram-Use%20Case%20Diagram.drawio.png) — system actors and planned capabilities.
+- [User requirements diagram](docs/diagram/GlowScan_Diagram-User%20Requirements.drawio.png) — high-level information exchanged across user, admin, and analysis workflows.
+
+## Backend structure
+
+The intended feature areas include authentication and profiles, skin assessment and analysis, personalized guidance and routines, product recommendations, progress tracking, subscriptions, and catalog administration.
+
+Current repository layout:
+
+| Path                                  | Purpose                                                                                                                            |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `src/main.ts`                         | Creates and starts the NestJS application.                                                                                         |
+| `src/app.module.ts`                   | Root NestJS module. No feature modules are currently registered.                                                                   |
+| `src/modules/auth/domain/entities/`   | Authentication domain entities mapped from the V1 `app_auth` schema.                                                               |
+| `src/modules/auth/application/ports/` | Persistence repository contracts for auth entities; adapters can implement them with PostgreSQL or another persistence technology. |
+| `src/modules/auth/`                   | Authentication module area; domain entities exist, but authentication behavior is not yet wired into the app.                      |
+| `database/migrations/`                | Ordered, versioned PostgreSQL migrations.                                                                                          |
+| `database/migrate.js`                 | CLI that tracks and applies database migrations.                                                                                   |
+| `test/`                               | Vitest unit and end-to-end test configuration and starter tests.                                                                   |
+
+## Database design
+
+The migrations create schemas for authentication and authorization (`app_auth`), user and skin profiles (`app_profile`), image upload intents (`app_cloudinary`), and skin analysis (`app_skin_analysis`), plus initial auth reference data.
+
+The migration runner connects to PostgreSQL using `DATABASE_URL`. It records applied versions and SHA-256 checksums in `public.schema_migrations`, applies each migration in its own transaction, and uses a PostgreSQL advisory lock to prevent concurrent runs. Migrations are run explicitly from the CLI; the NestJS application does not apply them at startup.
+
+## Getting started
+
+### Requirements
+
+- Node.js 22+ and npm
+- PostgreSQL (or a Supabase PostgreSQL project) to apply database migrations
+
+### Install and run
 
 ```bash
-$ npm install @nestjs/observe
+npm install
+npm run start:dev
 ```
 
-Then follow the [setup guide](https://docs.nestjs.com/observability/sdk) - it takes a single import and an app key.
+On startup, the application checks PostgreSQL before accepting requests. A successful connection prints `Connected to PostgreSQL database "<database>".` in the NestJS log. If the connection fails, startup stops and logs the error. You can also check the live connection with `GET /health/database`; a healthy response is `{"status":"ok","database":"connected"}`.
 
-The free plan needs no payment details and covers 300,000 events a month. You can also browse the [live demo](https://www.observe-demo.nestjs.com/dashboard) first - the whole dashboard over a busy service's data, with nothing to install.
+By default, the API listens at `http://localhost:3000`. Set the `PORT` environment variable to change the port.
+Swagger API documentation is available at `http://localhost:3000/api/docs`.
+Browser requests are allowed from the comma-separated origins in `GLOWNSCAN_FRONTEND_URL`; if unset, the local frontend origin `http://localhost:5173` is used. CORS credentials are enabled, so configure explicit trusted origins rather than `*`.
 
-## Resources
+Successful API responses use the shared envelope `{"status":200,"message":"Success","data":{...}}`. Errors use the same shape with `data: null`; known HTTP exceptions retain their HTTP status, while unexpected exceptions return a generic 500 response. Use the shared HTTP exception classes from `src/shared/exceptions/http.exceptions.ts` for common 400, 401, 403, 404, 409, and 422 responses.
 
-Check out a few resources that may come in handy when working with NestJS:
+The auth `Password` value object requires at least six characters, including an uppercase letter, a lowercase letter, a number, and a special character. Its string/JSON representations are redacted to avoid accidental disclosure.
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Auto-instrument your application with [NestJS Observe](https://observe.nestjs.com). Distributed tracing, metrics, and logging made easy. Error tracking and performance monitoring for your NestJS applications.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+### Implemented endpoint
 
-## Support
+| Method | Endpoint           | Response                                 |
+| ------ | ------------------ | ---------------------------------------- |
+| `GET`  | `/`                | `Hello World!`                           |
+| `GET`  | `/health/database` | `{"status":"ok","database":"connected"}` |
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+### Configure and migrate the database
 
-## Stay in touch
+Set `GLOWNSCAN_DATABASE_URL` in `.env.local` or `.env` to your Supabase PostgreSQL connection string. The application loads `.env.local` before `.env`; `DATABASE_URL` is also accepted as a fallback. Use a database role that can create schemas, tables, indexes, functions, triggers, and constraints for migrations. Prefer Supabase's direct connection or a **session-mode** pooler; transaction-mode poolers cannot guarantee that the advisory lock and migration statements use the same connection.
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+```bash
+npm run db:migrate:status
+npm run db:migrate
+```
 
-## License
+The initial migration sequence is:
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+| Version | Description                                                |
+| ------- | ---------------------------------------------------------- |
+| V001    | Authentication and authorization schema                    |
+| V002    | User and skin profile schema                               |
+| V003    | Seed auth roles, permissions, and role-permission mappings |
+| V004    | Cloudinary upload intents                                  |
+| V005    | Skin analysis schema                                       |
+
+Add a new `V<number>__description.sql` file for future changes; do not edit a migration after it has been applied. The runner detects missing or modified applied migrations and stops with an error. These migrations are intended for a fresh database; if the old combined SQL script was already run, do not apply these migrations blindly because the database has no recorded baseline. Back up and baseline that database deliberately before using the runner.
+
+The migration role should be separate from the application's runtime credentials. The schemas enable row-level security and revoke access from `PUBLIC`; configure the required database grants and RLS policies for the runtime role as part of application integration.
+
+## Build, test, and lint
+
+```bash
+npm run build
+npm test
+npm run test:e2e
+npm run lint
+```
