@@ -2,6 +2,7 @@ import {
   ArgumentsHost,
   ConflictException as NestConflictException,
   HttpException,
+  Logger,
   HttpStatus,
 } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
@@ -35,6 +36,9 @@ describe('GlobalExceptionFilter', () => {
     const json = vi.fn();
     const status = vi.fn(() => ({ json }));
     const filter = new GlobalExceptionFilter();
+    const loggerError = vi
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation(() => {});
     const host = {
       switchToHttp: () => ({
         getResponse: () => ({ status }),
@@ -53,6 +57,38 @@ describe('GlobalExceptionFilter', () => {
     expect(json).not.toHaveBeenCalledWith(
       expect.objectContaining({ message: 'sensitive database detail' }),
     );
+    expect(loggerError).toHaveBeenCalledWith(
+      'GET /users failed with status 500.',
+      expect.any(String),
+    );
+    loggerError.mockRestore();
+  });
+
+  it('returns the generic internal-server response for HTTP 500 exceptions', () => {
+    const json = vi.fn();
+    const status = vi.fn(() => ({ json }));
+    const filter = new GlobalExceptionFilter();
+    const host = {
+      switchToHttp: () => ({
+        getResponse: () => ({ status }),
+        getRequest: () => ({ method: 'GET', url: '/users' }),
+      }),
+    };
+
+    filter.catch(
+      new HttpException(
+        'sensitive internal detail',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      ),
+      host as ArgumentsHost,
+    );
+
+    expect(status).toHaveBeenCalledWith(HttpStatus.INTERNAL_SERVER_ERROR);
+    expect(json).toHaveBeenCalledWith({
+      status: HttpStatus.INTERNAL_SERVER_ERROR,
+      message: 'Internal server error',
+      data: null,
+    });
   });
 
   it('uses NestJS HTTP exceptions as the base for shared exception types', () => {

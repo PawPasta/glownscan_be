@@ -22,9 +22,11 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         ? exception.getStatus()
         : HttpStatus.INTERNAL_SERVER_ERROR;
     const message =
-      exception instanceof HttpException
-        ? this.getHttpExceptionMessage(exception)
-        : 'Internal server error';
+      status >= HttpStatus.INTERNAL_SERVER_ERROR
+        ? 'Internal server error'
+        : exception instanceof HttpException
+          ? this.getHttpExceptionMessage(exception)
+          : 'Internal server error';
 
     if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
       this.logger.error(
