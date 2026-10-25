@@ -16,6 +16,7 @@ import {
   VERIFY_EMAIL_PORT,
 } from '../src/modules/auth/application/ports/index.js';
 import { AuthenticationService } from '../src/modules/auth/application/use-case/authentication.service.js';
+import { TokenService } from '../src/modules/auth/application/use-case/token.service.js';
 import { UserStatus } from '../src/modules/auth/domain/entities/enums/auth.enums.js';
 import { SmtpEmailService } from '../src/modules/auth/infrastructure/adapters/smtp-email.service.js';
 import {
@@ -75,6 +76,7 @@ describe('AuthenticationService', () => {
     moduleRef = await Test.createTestingModule({
       providers: [
         AuthenticationService,
+        TokenService,
         { provide: REGISTER_ACCOUNT_PORT, useValue: repository },
         { provide: VERIFY_EMAIL_PORT, useValue: repository },
         { provide: RESEND_VERIFICATION_PORT, useValue: repository },

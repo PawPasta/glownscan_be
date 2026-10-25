@@ -1,8 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { JwtService } from '@nestjs/jwt';
 import { compare, hash } from 'bcryptjs';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import {
   BadRequestException,
   ConflictException,
@@ -27,7 +25,6 @@ import {
   RESET_PASSWORD_PORT,
   VALIDATE_ACCESS_TOKEN_PORT,
   VERIFY_EMAIL_PORT,
-  type AuthUserRecord,
   type ChangePasswordPort,
   type LoginPort,
   type LogoutPort,
@@ -42,13 +39,7 @@ import {
   type VerifyEmailPort,
 } from '../ports/index.js';
 import { SmtpEmailService } from '../../infrastructure/adapters/smtp-email.service.js';
-
-interface TokenPayload {
-  sub: string;
-  email: string;
-  tokenVersion: number;
-  roles: string[];
-}
+import { TokenService, type TokenPayload } from './token.service.js';
 
 interface RequestMetadata {
   ipAddress: string | null;
@@ -58,8 +49,6 @@ interface RequestMetadata {
 @Injectable()
 export class AuthenticationService {
   private readonly logger = new Logger(AuthenticationService.name);
-  private readonly accessTokenTtlSeconds: number;
-  private readonly refreshTokenTtlDays: number;
 
   constructor(
     @Inject(REGISTER_ACCOUNT_PORT)
@@ -83,24 +72,8 @@ export class AuthenticationService {
     @Inject(VALIDATE_ACCESS_TOKEN_PORT)
     private readonly validateAccessTokenPort: ValidateAccessTokenPort,
     private readonly emailService: SmtpEmailService,
-    private readonly jwt: JwtService,
-    config: ConfigService,
-  ) {
-    this.accessTokenTtlSeconds = Number(
-      config.get<string>('GLOWNSCAN_ACCESS_TOKEN_TTL_SECONDS', '900'),
-    );
-    this.refreshTokenTtlDays = Number(
-      config.get<string>('GLOWNSCAN_REFRESH_TOKEN_TTL_DAYS', '30'),
-    );
-    if (
-      !Number.isInteger(this.accessTokenTtlSeconds) ||
-      this.accessTokenTtlSeconds < 60 ||
-      !Number.isInteger(this.refreshTokenTtlDays) ||
-      this.refreshTokenTtlDays < 1
-    ) {
-      throw new Error('JWT and refresh token expiration settings are invalid.');
-    }
-  }
+    private readonly tokenService: TokenService,
+  ) {}
 
   async register(input: {
     email: string;
@@ -112,12 +85,12 @@ export class AuthenticationService {
     if (password.value !== input.confirmPassword) {
       throw new BadRequestException('Password confirmation does not match.');
     }
-    const token = this.createOpaqueToken();
+    const token = this.tokenService.createOpaqueToken();
     const registration: RegisterUserData = {
       email: email.value,
       passwordHash: await hash(password.value, 12),
-      verificationTokenHash: this.hashToken(token),
-      tokenExpiresAt: this.expiryInHours(24),
+      verificationTokenHash: this.tokenService.hashToken(token),
+      tokenExpiresAt: this.tokenService.expiryInHours(24),
     };
 
     try {
@@ -144,7 +117,7 @@ export class AuthenticationService {
   }): Promise<{ message: string }> {
     const verified = await this.verifyEmailPort.verifyEmail(
       parseEmail(input.email).value,
-      this.hashToken(input.token),
+      this.tokenService.hashToken(input.token),
     );
     if (!verified) {
       throw new BadRequestException('Verification link is invalid or expired.');
@@ -156,11 +129,11 @@ export class AuthenticationService {
     const email = parseEmail(emailAddress).value;
     const user = await this.resendVerificationPort.findUserByEmail(email);
     if (user?.status === UserStatus.PendingVerification) {
-      const token = this.createOpaqueToken();
+      const token = this.tokenService.createOpaqueToken();
       await this.resendVerificationPort.resendVerificationToken(
         user.id,
-        this.hashToken(token),
-        this.expiryInHours(24),
+        this.tokenService.hashToken(token),
+        this.tokenService.expiryInHours(24),
       );
       try {
         await this.emailService.sendVerificationEmail(email, token);
@@ -207,22 +180,24 @@ export class AuthenticationService {
     }
     await this.loginPort.clearFailedLogins(user.id);
 
-    const refreshToken = this.createOpaqueToken();
+    const refreshToken = this.tokenService.createOpaqueToken();
     const session: RefreshSessionData = {
       userId: user.id,
       deviceUuid: input.deviceUuid ?? randomUUID(),
       platform: parsePlatform(input.platform),
-      tokenHash: this.hashToken(refreshToken),
+      tokenHash: this.tokenService.hashToken(refreshToken),
       familyId: randomUUID(),
-      expiresAt: this.expiryInDays(this.refreshTokenTtlDays),
+      expiresAt: this.tokenService.expiryInDays(
+        this.tokenService.refreshTokenTtlDays,
+      ),
       ipAddress: metadata.ipAddress,
       userAgent: metadata.userAgent,
     };
     await this.loginPort.createRefreshSession(session);
     return {
-      accessToken: await this.issueAccessToken(user),
+      accessToken: await this.tokenService.issueAccessToken(user),
       refreshToken,
-      expiresIn: this.accessTokenTtlSeconds,
+      expiresIn: this.tokenService.accessTokenTtlSeconds,
     };
   }
 
@@ -231,24 +206,26 @@ export class AuthenticationService {
     refreshToken: string;
     expiresIn: number;
   }> {
-    const replacementToken = this.createOpaqueToken();
+    const replacementToken = this.tokenService.createOpaqueToken();
     const user = await this.refreshSessionPort.rotateRefreshToken(
-      this.hashToken(refreshToken),
-      this.hashToken(replacementToken),
-      this.expiryInDays(this.refreshTokenTtlDays),
+      this.tokenService.hashToken(refreshToken),
+      this.tokenService.hashToken(replacementToken),
+      this.tokenService.expiryInDays(this.tokenService.refreshTokenTtlDays),
     );
     if (!user || user.status !== UserStatus.Active) {
       throw new UnauthorizedException('Refresh token is invalid or expired.');
     }
     return {
-      accessToken: await this.issueAccessToken(user),
+      accessToken: await this.tokenService.issueAccessToken(user),
       refreshToken: replacementToken,
-      expiresIn: this.accessTokenTtlSeconds,
+      expiresIn: this.tokenService.accessTokenTtlSeconds,
     };
   }
 
   async logout(refreshToken: string): Promise<{ message: string }> {
-    await this.logoutPort.revokeRefreshToken(this.hashToken(refreshToken));
+    await this.logoutPort.revokeRefreshToken(
+      this.tokenService.hashToken(refreshToken),
+    );
     return { message: 'Logged out successfully.' };
   }
 
@@ -256,12 +233,12 @@ export class AuthenticationService {
     const email = parseEmail(emailAddress).value;
     const user = await this.requestPasswordResetPort.findUserByEmail(email);
     if (user) {
-      const token = this.createOpaqueToken();
+      const token = this.tokenService.createOpaqueToken();
       await this.requestPasswordResetPort.createActionToken(
         user.id,
         ActionTokenPurpose.ResetPassword,
-        this.hashToken(token),
-        this.expiryInHours(1),
+        this.tokenService.hashToken(token),
+        this.tokenService.expiryInHours(1),
       );
       try {
         await this.emailService.sendPasswordResetEmail(email, token);
@@ -286,7 +263,7 @@ export class AuthenticationService {
     const password = parsePassword(input.newPassword);
     const updated = await this.resetPasswordPort.resetPassword(
       parseEmail(input.email).value,
-      this.hashToken(input.token),
+      this.tokenService.hashToken(input.token),
       await hash(password.value, 12),
     );
     if (!updated) {
@@ -341,30 +318,6 @@ export class AuthenticationService {
     };
   }
 
-  private issueAccessToken(user: AuthUserRecord): Promise<string> {
-    return this.jwt.signAsync({
-      sub: user.id,
-      email: user.email,
-      tokenVersion: user.tokenVersion,
-      roles: user.roles,
-    } satisfies TokenPayload);
-  }
-
-  private createOpaqueToken(): string {
-    return randomBytes(32).toString('base64url');
-  }
-
-  private hashToken(token: string): string {
-    return createHash('sha256').update(token).digest('hex');
-  }
-
-  private expiryInHours(hours: number): Date {
-    return new Date(Date.now() + hours * 60 * 60 * 1000);
-  }
-
-  private expiryInDays(days: number): Date {
-    return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
-  }
 }
 
 function parsePlatform(platform?: string): 'ANDROID' | 'IOS' | 'WEBSITE' {

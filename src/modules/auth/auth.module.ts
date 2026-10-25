@@ -15,6 +15,7 @@ import {
   VERIFY_EMAIL_PORT,
 } from './application/ports/index.js';
 import { AuthenticationService } from './application/use-case/authentication.service.js';
+import { TokenService } from './application/use-case/token.service.js';
 import { PostgresAuthenticationAdapter } from './infrastructure/adapters/postgres-authentication.adapter.js';
 import { SmtpEmailService } from './infrastructure/adapters/smtp-email.service.js';
 import { AuthController } from './presentation/auth.controller.js';
@@ -89,6 +90,7 @@ import { JwtAuthGuard } from './presentation/jwt-auth.guard.js';
       useExisting: PostgresAuthenticationAdapter,
     },
     AuthenticationService,
+    TokenService,
     SmtpEmailService,
     JwtAuthGuard,
   ],
