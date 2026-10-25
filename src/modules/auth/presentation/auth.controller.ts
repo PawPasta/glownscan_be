@@ -9,6 +9,7 @@ import { AuthenticationService } from '../application/use-case/authentication.se
 import {
   ChangePasswordDto,
   LoginDto,
+  LogoutTokenDto,
   RefreshTokenDto,
   ResendVerificationDto,
   RegisterDto,
@@ -52,11 +53,11 @@ export class AuthController {
 
   @Post('refresh')
   refresh(@Body() body: RefreshTokenDto) {
-    return this.authentication.refresh(body.refreshToken);
+    return this.authentication.refresh(body);
   }
 
   @Post('logout')
-  logout(@Body() body: RefreshTokenDto) {
+  logout(@Body() body: LogoutTokenDto) {
     return this.authentication.logout(body.refreshToken);
   }
 

@@ -54,6 +54,18 @@ export class LoginDto {
 
 export class RefreshTokenDto {
   @IsString()
+  @MinLength(1)
+  @MaxLength(4096)
+  accessToken!: string;
+
+  @IsString()
+  @MinLength(32)
+  @MaxLength(128)
+  refreshToken!: string;
+}
+
+export class LogoutTokenDto {
+  @IsString()
   @MinLength(32)
   @MaxLength(128)
   refreshToken!: string;

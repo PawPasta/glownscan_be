@@ -45,6 +45,12 @@ export class TokenService {
     } satisfies TokenPayload);
   }
 
+  verifyAccessToken(token: string): Promise<TokenPayload> {
+    return this.jwt.verifyAsync<TokenPayload>(token, {
+      ignoreExpiration: true,
+    });
+  }
+
   createOpaqueToken(): string {
     return randomBytes(32).toString('base64url');
   }

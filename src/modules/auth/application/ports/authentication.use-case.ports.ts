@@ -59,6 +59,7 @@ export interface RefreshSessionPort {
     oldTokenHash: string,
     newTokenHash: string,
     expiresAt: Date,
+    userId: Uuid,
   ): Promise<AuthUserRecord | null>;
 }
 

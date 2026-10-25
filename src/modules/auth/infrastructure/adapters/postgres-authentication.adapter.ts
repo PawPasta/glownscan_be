@@ -305,6 +305,7 @@ export class PostgresAuthenticationAdapter
     oldTokenHash: string,
     newTokenHash: string,
     expiresAt: Date,
+    userId: string,
   ): Promise<AuthUserRecord | null> {
     return this.database.transaction(async (client) => {
       const { rows } = await client.query<{
@@ -317,9 +318,9 @@ export class PostgresAuthenticationAdapter
       }>(
         `SELECT id, user_id, device_id, token_family_id, expires_at, revoked_at
          FROM app_auth.refresh_tokens
-         WHERE token_hash = $1
+         WHERE token_hash = $1 AND user_id = $2
          FOR UPDATE`,
-        [oldTokenHash],
+        [oldTokenHash, userId],
       );
       const current = rows[0];
       if (!current) {

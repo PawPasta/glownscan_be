@@ -49,7 +49,10 @@ describe('AuthenticationService', () => {
     sendVerificationEmail: ReturnType<typeof vi.fn>;
     sendPasswordResetEmail: ReturnType<typeof vi.fn>;
   };
-  let jwt: { signAsync: ReturnType<typeof vi.fn> };
+  let jwt: {
+    signAsync: ReturnType<typeof vi.fn>;
+    verifyAsync: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(async () => {
     repository = {
@@ -71,7 +74,10 @@ describe('AuthenticationService', () => {
       sendVerificationEmail: vi.fn().mockResolvedValue(undefined),
       sendPasswordResetEmail: vi.fn().mockResolvedValue(undefined),
     };
-    jwt = { signAsync: vi.fn().mockResolvedValue('signed-access-token') };
+    jwt = {
+      signAsync: vi.fn().mockResolvedValue('signed-access-token'),
+      verifyAsync: vi.fn(),
+    };
 
     moduleRef = await Test.createTestingModule({
       providers: [
@@ -161,13 +167,65 @@ describe('AuthenticationService', () => {
 
     expect(result.accessToken).toBe('signed-access-token');
     expect(result.refreshToken).toHaveLength(43);
-    expect(result.expiresIn).toBe(900);
+    expect(result).not.toHaveProperty('expiresIn');
     const [session] = repository.createRefreshSession.mock.calls[0] as [
       { userId: string; tokenHash: string },
     ];
     expect(session.userId).toBe(userId);
     expect(session.tokenHash).toMatch(/^[0-9a-f]{64}$/);
     expect(session.tokenHash).not.toBe(result.refreshToken);
+  });
+
+  it('rotates refresh tokens only when paired with a valid current access token', async () => {
+    const claims = {
+      sub: userId,
+      email: 'user@example.com',
+      tokenVersion: 1,
+      roles: ['USER'],
+    };
+    const user = {
+      id: userId,
+      email: 'user@example.com',
+      passwordHash: 'password-hash',
+      status: UserStatus.Active,
+      tokenVersion: 1,
+      roles: ['USER'],
+      failedLoginCount: 0,
+      lockedUntil: null,
+    };
+    jwt.verifyAsync.mockResolvedValue(claims);
+    repository.findUserById.mockResolvedValue(user);
+    repository.rotateRefreshToken.mockResolvedValue(user);
+
+    const result = await service.refresh({
+      accessToken: 'expired-but-valid-access-token',
+      refreshToken: 'current-refresh-token'.padEnd(32, 'x'),
+    });
+
+    expect(jwt.verifyAsync).toHaveBeenCalledWith(
+      'expired-but-valid-access-token',
+      { ignoreExpiration: true },
+    );
+    expect(repository.rotateRefreshToken).toHaveBeenCalledWith(
+      expect.stringMatching(/^[0-9a-f]{64}$/),
+      expect.stringMatching(/^[0-9a-f]{64}$/),
+      expect.any(Date),
+      userId,
+    );
+    expect(result.accessToken).toBe('signed-access-token');
+    expect(result.refreshToken).toHaveLength(43);
+  });
+
+  it('rejects refresh when the current access token cannot be verified', async () => {
+    jwt.verifyAsync.mockRejectedValue(new Error('Token expired or invalid'));
+
+    await expect(
+      service.refresh({
+        accessToken: 'invalid-access-token',
+        refreshToken: 'current-refresh-token'.padEnd(32, 'x'),
+      }),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(repository.rotateRefreshToken).not.toHaveBeenCalled();
   });
 
   it('records failed login attempts for an existing account', async () => {

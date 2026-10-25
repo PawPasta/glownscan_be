@@ -157,7 +157,7 @@ export class AuthenticationService {
       platform?: string;
     },
     metadata: RequestMetadata,
-  ): Promise<{ accessToken: string; refreshToken: string; expiresIn: number }> {
+  ): Promise<{ accessToken: string; refreshToken: string }> {
     const user = await this.loginPort.findUserByEmail(
       parseEmail(input.email).value,
     );
@@ -197,20 +197,30 @@ export class AuthenticationService {
     return {
       accessToken: await this.tokenService.issueAccessToken(user),
       refreshToken,
-      expiresIn: this.tokenService.accessTokenTtlSeconds,
     };
   }
 
-  async refresh(refreshToken: string): Promise<{
+  async refresh(input: {
+    accessToken: string;
+    refreshToken: string;
+  }): Promise<{
     accessToken: string;
     refreshToken: string;
     expiresIn: number;
   }> {
+    let payload: TokenPayload;
+    try {
+      payload = await this.tokenService.verifyAccessToken(input.accessToken);
+    } catch {
+      throw new UnauthorizedException('Access token is invalid.');
+    }
+    const context = await this.validateAccessToken(payload);
     const replacementToken = this.tokenService.createOpaqueToken();
     const user = await this.refreshSessionPort.rotateRefreshToken(
-      this.tokenService.hashToken(refreshToken),
+      this.tokenService.hashToken(input.refreshToken),
       this.tokenService.hashToken(replacementToken),
       this.tokenService.expiryInDays(this.tokenService.refreshTokenTtlDays),
+      context.userId,
     );
     if (!user || user.status !== UserStatus.Active) {
       throw new UnauthorizedException('Refresh token is invalid or expired.');
