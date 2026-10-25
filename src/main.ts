@@ -8,7 +8,12 @@ import { GlobalExceptionFilter } from './shared/handler/global-exception.filter.
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  // Config Middlewares, Interceptors, Filters, Pipes, etc.
   setupCors(app);
+  setupSwagger(app);
+
+  // Global Pipes, Interceptors, Filters
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -18,7 +23,7 @@ async function bootstrap() {
   );
   app.useGlobalInterceptors(new ResponseInterceptor());
   app.useGlobalFilters(new GlobalExceptionFilter());
-  setupSwagger(app);
+  
   app.enableShutdownHooks();
   await app.listen(process.env.PORT ?? 3000);
 }
