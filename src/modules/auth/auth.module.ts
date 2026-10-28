@@ -19,7 +19,7 @@ import { TokenService } from './application/use-case/token.service.js';
 import { PostgresAuthenticationAdapter } from './infrastructure/adapters/postgres-authentication.adapter.js';
 import { SmtpEmailService } from './infrastructure/adapters/smtp-email.service.js';
 import { AuthController } from './presentation/auth.controller.js';
-import { JwtAuthGuard } from './presentation/jwt-auth.guard.js';
+import { JwtAuthGuard } from '../../shared/security/jwt-auth.guard.js';
 
 @Module({
   imports: [
@@ -94,5 +94,6 @@ import { JwtAuthGuard } from './presentation/jwt-auth.guard.js';
     SmtpEmailService,
     JwtAuthGuard,
   ],
+  exports: [AuthenticationService, JwtAuthGuard, JwtModule],
 })
 export class AuthModule {}

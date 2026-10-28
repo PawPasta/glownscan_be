@@ -89,6 +89,26 @@ Project documentation is organized in the [`docs/`](docs/) folder:
 - [`diagram/`](docs/diagram/) — visual references for screen flows, use cases, and user requirements.
 - [`git/`](docs/git/) — repository contribution conventions, including [commit message rules](docs/git/COMMIT.md).
 
+## Profile API
+
+Send an access token in the Bearer authorization header for profile endpoints.
+`GET /profile` returns the personal and skin profiles. Use `PATCH /profile`
+to update personal details and `PATCH /profile/skin` to update skin details.
+Fields omitted from a patch are unchanged; nullable fields can be set to
+`null` to clear them.
+
+To set an avatar, call `POST /profile/avatar/upload-intent`, upload the image
+directly to Cloudinary using the returned `cloudName`, `apiKey`, `timestamp`,
+`publicId`, and `signature`, then call `POST /profile/avatar/confirm` with
+Cloudinary's `public_id`, `version`, `signature`, and `secure_url`. The upload
+intent metadata is stored in `app_cloudinary.upload_intents`; it expires after
+10 minutes and can only be consumed once. On confirmation, the backend
+atomically consumes that intent and updates `app_profile.user_profiles.avatar_url`
+with Cloudinary's verified `secure_url`. The image URL is not stored in the
+upload-intent table. Configure
+`GLOWNSCAN_CLOUDINARY_CLOUD_NAME`, `GLOWNSCAN_CLOUDINARY_API_KEY`, and
+`GLOWNSCAN_CLOUDINARY_API_SECRET` in the backend environment.
+
 ## Backend structure
 
 The intended feature areas include authentication and profiles, skin assessment and analysis, personalized guidance and routines, product recommendations, progress tracking, subscriptions, and catalog administration.

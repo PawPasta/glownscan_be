@@ -1,9 +1,9 @@
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import type { Request } from 'express';
-import { UnauthorizedException } from '../../../shared/handler/http.exceptions.js';
-import type { SecurityContext } from '../../../shared/security/security.context.js';
-import { AuthenticationService } from '../application/use-case/authentication.service.js';
+import { UnauthorizedException } from '../handler/http.exceptions.js';
+import type { SecurityContext } from './security.context.js';
+import { AuthenticationService } from '../../modules/auth/application/use-case/authentication.service.js';
 
 interface JwtClaims {
   sub: string;

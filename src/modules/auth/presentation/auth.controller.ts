@@ -17,7 +17,7 @@ import {
   ResetPasswordRequestDto,
   VerifyEmailDto,
 } from './auth.dto.js';
-import { JwtAuthGuard } from './jwt-auth.guard.js';
+import { JwtAuthGuard } from '../../../shared/security/jwt-auth.guard.js';
 
 @Controller('auth')
 export class AuthController {
