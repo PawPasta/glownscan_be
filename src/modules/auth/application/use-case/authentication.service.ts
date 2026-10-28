@@ -16,6 +16,10 @@ import { Email } from '../../domain/value-objects/email.vo.js';
 import { Password } from '../../domain/value-objects/password.vo.js';
 import {
   CHANGE_PASSWORD_PORT,
+  FIREBASE_ID_TOKEN_VERIFIER_PORT,
+  FIREBASE_LOGIN_PORT,
+  FirebaseAccountConflictError,
+  InvalidFirebaseIdTokenError,
   LOGIN_PORT,
   LOGOUT_PORT,
   REFRESH_SESSION_PORT,
@@ -26,6 +30,10 @@ import {
   VALIDATE_ACCESS_TOKEN_PORT,
   VERIFY_EMAIL_PORT,
   type ChangePasswordPort,
+  type AuthUserRecord,
+  type FirebaseIdTokenVerifierPort,
+  type FirebaseIdentityClaims,
+  type FirebaseLoginPort,
   type LoginPort,
   type LogoutPort,
   type RefreshSessionData,
@@ -59,6 +67,10 @@ export class AuthenticationService {
     private readonly resendVerificationPort: ResendVerificationPort,
     @Inject(LOGIN_PORT)
     private readonly loginPort: LoginPort,
+    @Inject(FIREBASE_LOGIN_PORT)
+    private readonly firebaseLoginPort: FirebaseLoginPort,
+    @Inject(FIREBASE_ID_TOKEN_VERIFIER_PORT)
+    private readonly firebaseIdTokenVerifier: FirebaseIdTokenVerifierPort,
     @Inject(REFRESH_SESSION_PORT)
     private readonly refreshSessionPort: RefreshSessionPort,
     @Inject(LOGOUT_PORT)
@@ -153,7 +165,6 @@ export class AuthenticationService {
     input: {
       email: string;
       password: string;
-      deviceUuid?: string;
       platform?: string;
     },
     metadata: RequestMetadata,
@@ -167,7 +178,10 @@ export class AuthenticationService {
     if (user.status === UserStatus.Locked) {
       throw new ForbiddenException('This account is temporarily locked.');
     }
-    if (!(await compare(input.password, user.passwordHash))) {
+    if (
+      user.passwordHash === null ||
+      !(await compare(input.password, user.passwordHash))
+    ) {
       await this.loginPort.recordFailedLogin(user.email);
       throw new UnauthorizedException('Invalid email or password.');
     }
@@ -180,24 +194,67 @@ export class AuthenticationService {
     }
     await this.loginPort.clearFailedLogins(user.id);
 
-    const refreshToken = this.tokenService.createOpaqueToken();
-    const session: RefreshSessionData = {
-      userId: user.id,
-      deviceUuid: input.deviceUuid ?? randomUUID(),
-      platform: parsePlatform(input.platform),
-      tokenHash: this.tokenService.hashToken(refreshToken),
-      familyId: randomUUID(),
-      expiresAt: this.tokenService.expiryInDays(
-        this.tokenService.refreshTokenTtlDays,
-      ),
-      ipAddress: metadata.ipAddress,
-      userAgent: metadata.userAgent,
-    };
-    await this.loginPort.createRefreshSession(session);
-    return {
-      accessToken: await this.tokenService.issueAccessToken(user),
-      refreshToken,
-    };
+    return this.createLoginSession(user, input.platform, metadata);
+  }
+
+  async loginWithFirebase(
+    input: { idToken: string; platform?: string },
+    metadata: RequestMetadata,
+  ): Promise<{ accessToken: string; refreshToken: string }> {
+    let identity: FirebaseIdentityClaims;
+    try {
+      identity = await this.firebaseIdTokenVerifier.verifyIdToken(input.idToken);
+    } catch (error) {
+      if (error instanceof InvalidFirebaseIdTokenError) {
+        throw new UnauthorizedException(
+          'Firebase ID token is invalid or expired.',
+        );
+      }
+      throw error;
+    }
+
+    if (!identity.emailVerified || !identity.email) {
+      throw new UnauthorizedException(
+        'A verified email is required to log in with Firebase.',
+      );
+    }
+
+    let normalizedEmail: string;
+    try {
+      normalizedEmail = parseEmail(identity.email).value;
+    } catch {
+      throw new UnauthorizedException(
+        'Firebase ID token does not contain a valid email address.',
+      );
+    }
+
+    let user: AuthUserRecord;
+    try {
+      user = await this.firebaseLoginPort.findOrCreateFirebaseUser({
+        ...identity,
+        email: normalizedEmail,
+      });
+    } catch (error) {
+      if (
+        error instanceof FirebaseAccountConflictError ||
+        isUniqueViolation(error)
+      ) {
+        throw new ConflictException(
+          'This Firebase identity or email is already linked to another account.',
+        );
+      }
+      throw error;
+    }
+
+    if (user.status === UserStatus.Locked) {
+      throw new ForbiddenException('This account is temporarily locked.');
+    }
+    if (user.status !== UserStatus.Active) {
+      throw new ForbiddenException('This account cannot log in.');
+    }
+
+    await this.loginPort.clearFailedLogins(user.id);
+    return this.createLoginSession(user, input.platform, metadata);
   }
 
   async refresh(input: {
@@ -289,7 +346,11 @@ export class AuthenticationService {
     input: { oldPassword: string; newPassword: string },
   ): Promise<{ message: string }> {
     const user = await this.changePasswordPort.findUserById(context.userId);
-    if (!user || !(await compare(input.oldPassword, user.passwordHash))) {
+    if (
+      !user ||
+      user.passwordHash === null ||
+      !(await compare(input.oldPassword, user.passwordHash))
+    ) {
       throw new UnauthorizedException('Current password is incorrect.');
     }
     const newPassword = parsePassword(input.newPassword);
@@ -309,6 +370,31 @@ export class AuthenticationService {
       );
     }
     return { message: 'Password changed successfully. Please log in again.' };
+  }
+
+  private async createLoginSession(
+    user: AuthUserRecord,
+    platform: string | undefined,
+    metadata: RequestMetadata,
+  ): Promise<{ accessToken: string; refreshToken: string }> {
+    const refreshToken = this.tokenService.createOpaqueToken();
+    const session: RefreshSessionData = {
+      userId: user.id,
+      deviceUuid: randomUUID(),
+      platform: parsePlatform(platform),
+      tokenHash: this.tokenService.hashToken(refreshToken),
+      familyId: randomUUID(),
+      expiresAt: this.tokenService.expiryInDays(
+        this.tokenService.refreshTokenTtlDays,
+      ),
+      ipAddress: metadata.ipAddress,
+      userAgent: metadata.userAgent,
+    };
+    await this.loginPort.createRefreshSession(session);
+    return {
+      accessToken: await this.tokenService.issueAccessToken(user),
+      refreshToken,
+    };
   }
 
   async validateAccessToken(payload: TokenPayload): Promise<SecurityContext> {

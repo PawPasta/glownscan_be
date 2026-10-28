@@ -193,6 +193,7 @@ The auth `Password` value object requires at least six characters, including an 
 | `POST` | `/auth/verify-email`           | Verify a registration token using `{ "email", "token" }`               |
 | `POST` | `/auth/verify-email/resend`    | Resend a verification link without revealing account status            |
 | `POST` | `/auth/login`                  | Return a JWT access token and opaque refresh token                     |
+| `POST` | `/auth/firebase/login`         | Verify a Firebase ID token, link/create the account, and return tokens |
 | `POST` | `/auth/refresh`                | Rotate a refresh token and return a new access/refresh token pair      |
 | `POST` | `/auth/logout`                 | Revoke the refresh token family                                        |
 | `POST` | `/auth/password/reset/request` | Send a reset link without revealing whether the email exists           |
@@ -200,6 +201,15 @@ The auth `Password` value object requires at least six characters, including an 
 | `POST` | `/auth/password/change`        | Authenticated; verify `oldPassword`, set `newPassword`                 |
 
 All POST request bodies are validated; unknown fields are rejected. Passwords are bcrypt-hashed and limited to 72 UTF-8 bytes to match bcrypt's input limit. Verification and reset tokens are random, single-use, expire, and are stored only as SHA-256 hashes. Refresh tokens are opaque, rotated on use, and stored hashed in `app_auth.refresh_tokens` (not `action_tokens`). Password changes invalidate existing access tokens and revoke refresh sessions. Five consecutive failed login attempts lock the account for 15 minutes. Password-reset requests always return the same message whether or not the account exists.
+
+Firebase login accepts `{ "idToken": "<Firebase ID token>" }` at
+`POST /auth/firebase/login`. The backend verifies the token with Firebase
+Admin against `GLOWNSCAN_FIREBASE_PROJECT_ID`; decoded JWT payloads are never
+trusted without signature and claim verification. A verified email is required.
+New Firebase accounts are created as active users with a nullable password,
+and Firebase identity claims are stored in `app_auth.user_providers`.
+`name` and `picture` populate missing profile fields. Do not send a device UUID:
+the backend generates one for each login session.
 
 ### Configure and migrate the database
 
@@ -219,6 +229,7 @@ The initial migration sequence is:
 | V003    | Seed auth roles, permissions, and role-permission mappings |
 | V004    | Cloudinary upload intents                                  |
 | V005    | Skin analysis schema                                       |
+| V006    | Firebase provider identities and nullable user passwords  |
 
 Add a new `V<number>__description.sql` file for future changes; do not edit a migration after it has been applied. The runner detects missing or modified applied migrations and stops with an error. These migrations are intended for a fresh database; if the old combined SQL script was already run, do not apply these migrations blindly because the database has no recorded baseline. Back up and baseline that database deliberately before using the runner.
 
@@ -226,7 +237,7 @@ The migration role should be separate from the application's runtime credentials
 
 ### Auth configuration and admin bootstrap
 
-Configure the SMTP, frontend URLs, JWT secret, and database values from `.env.example` in `.env.local`. Use a unique `GLOWNSCAN_JWT_ACCESS_SECRET` of at least 32 characters. The app requires database and SMTP configuration at startup.
+Configure the SMTP, frontend URLs, JWT secret, database, and Firebase project ID values from `.env.example` in `.env.local`. Use a unique `GLOWNSCAN_JWT_ACCESS_SECRET` of at least 32 characters. The app requires database, SMTP, and Firebase project ID configuration at startup.
 
 Run migrations first, then create the initial admin explicitly:
 

@@ -4,6 +4,8 @@ import { JwtModule } from '@nestjs/jwt';
 import { DatabaseModule } from '../../shared/database/database.module.js';
 import {
   CHANGE_PASSWORD_PORT,
+  FIREBASE_ID_TOKEN_VERIFIER_PORT,
+  FIREBASE_LOGIN_PORT,
   LOGIN_PORT,
   LOGOUT_PORT,
   REFRESH_SESSION_PORT,
@@ -17,6 +19,7 @@ import {
 import { AuthenticationService } from './application/use-case/authentication.service.js';
 import { TokenService } from './application/use-case/token.service.js';
 import { PostgresAuthenticationAdapter } from './infrastructure/adapters/postgres-authentication.adapter.js';
+import { FirebaseIdTokenVerifier } from './infrastructure/adapters/firebase-id-token.verifier.js';
 import { SmtpEmailService } from './infrastructure/adapters/smtp-email.service.js';
 import { AuthController } from './presentation/auth.controller.js';
 import { JwtAuthGuard } from '../../shared/security/jwt-auth.guard.js';
@@ -64,6 +67,15 @@ import { JwtAuthGuard } from '../../shared/security/jwt-auth.guard.js';
     {
       provide: LOGIN_PORT,
       useExisting: PostgresAuthenticationAdapter,
+    },
+    {
+      provide: FIREBASE_LOGIN_PORT,
+      useExisting: PostgresAuthenticationAdapter,
+    },
+    FirebaseIdTokenVerifier,
+    {
+      provide: FIREBASE_ID_TOKEN_VERIFIER_PORT,
+      useExisting: FirebaseIdTokenVerifier,
     },
     {
       provide: REFRESH_SESSION_PORT,

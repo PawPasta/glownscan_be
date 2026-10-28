@@ -28,13 +28,16 @@ minimum, verify the database URL variable expected by the application:
 
 ``` dotenv
 GLOWNSCAN_DATABASE_URL=REPLACE_WITH_YOUR_DATABASE_CONNECTION_STRING
+GLOWNSCAN_FIREBASE_PROJECT_ID=REPLACE_WITH_YOUR_FIREBASE_PROJECT_ID
 ```
 
-This is a placeholder, not a working connection string. Use the real
-value from your secure configuration source. If the app relies on
-additional secrets, configure those as well. `DATABASE_URL` is a
-fallback in the documented code path, but prefer the variable the
-application explicitly expects.
+These are placeholders, not working values. Use the real values from
+your secure configuration source. The Firebase project ID is used to
+verify Firebase ID tokens; the backend does not need a Firebase service
+account private key for this verification flow. Configure the SMTP and
+JWT values from `.env.example` as well. `DATABASE_URL` is a fallback in
+the documented code path, but prefer the variable the application
+explicitly expects.
 
 Never paste the real `.env` contents into chat, tickets, shell
 transcripts, or GitHub logs.

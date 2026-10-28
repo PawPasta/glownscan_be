@@ -4,7 +4,7 @@ import type { Uuid } from '../../../../shared/types/domain.types.js';
 export interface AuthUserRecord {
   id: Uuid;
   email: string;
-  passwordHash: string;
+  passwordHash: string | null;
   status: string;
   tokenVersion: number;
   roles: string[];
@@ -52,6 +52,40 @@ export interface LoginPort {
   recordFailedLogin(email: string): Promise<void>;
   clearFailedLogins(userId: Uuid): Promise<void>;
   createRefreshSession(data: RefreshSessionData): Promise<void>;
+}
+
+export interface FirebaseIdentityClaims {
+  uid: string;
+  email: string;
+  emailVerified: boolean;
+  name: string | null;
+  picture: string | null;
+  signInProvider: string;
+  providerData: Record<string, unknown>;
+}
+
+export interface FirebaseLoginPort {
+  findOrCreateFirebaseUser(
+    identity: FirebaseIdentityClaims,
+  ): Promise<AuthUserRecord>;
+}
+
+export interface FirebaseIdTokenVerifierPort {
+  verifyIdToken(idToken: string): Promise<FirebaseIdentityClaims>;
+}
+
+export class InvalidFirebaseIdTokenError extends Error {
+  constructor() {
+    super('Firebase ID token is invalid or expired.');
+    this.name = 'InvalidFirebaseIdTokenError';
+  }
+}
+
+export class FirebaseAccountConflictError extends Error {
+  constructor() {
+    super('Firebase identity is already linked to another account.');
+    this.name = 'FirebaseAccountConflictError';
+  }
 }
 
 export interface RefreshSessionPort {
@@ -102,6 +136,10 @@ export const REGISTER_ACCOUNT_PORT = Symbol('REGISTER_ACCOUNT_PORT');
 export const VERIFY_EMAIL_PORT = Symbol('VERIFY_EMAIL_PORT');
 export const RESEND_VERIFICATION_PORT = Symbol('RESEND_VERIFICATION_PORT');
 export const LOGIN_PORT = Symbol('LOGIN_PORT');
+export const FIREBASE_LOGIN_PORT = Symbol('FIREBASE_LOGIN_PORT');
+export const FIREBASE_ID_TOKEN_VERIFIER_PORT = Symbol(
+  'FIREBASE_ID_TOKEN_VERIFIER_PORT',
+);
 export const REFRESH_SESSION_PORT = Symbol('REFRESH_SESSION_PORT');
 export const LOGOUT_PORT = Symbol('LOGOUT_PORT');
 export const REQUEST_PASSWORD_RESET_PORT = Symbol(

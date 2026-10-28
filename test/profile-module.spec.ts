@@ -19,6 +19,7 @@ describe('ProfileModule dependency wiring', () => {
                 'profile-module-test-secret-0123456789abcdef',
               GLOWNSCAN_ACCESS_TOKEN_TTL_SECONDS: '900',
               GLOWNSCAN_REFRESH_TOKEN_TTL_DAYS: '30',
+              GLOWNSCAN_FIREBASE_PROJECT_ID: 'profile-module-test',
               GLOWNSCAN_CLOUDINARY_CLOUD_NAME: 'test-cloud',
               GLOWNSCAN_CLOUDINARY_API_KEY: 'test-key',
               GLOWNSCAN_CLOUDINARY_API_SECRET: 'test-secret',

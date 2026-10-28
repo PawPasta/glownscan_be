@@ -8,7 +8,7 @@ import {
 export interface UserProps {
   id: Uuid;
   email: Email;
-  passwordHash: string;
+  passwordHash: string | null;
   status: UserStatus;
   emailVerifiedAt: Date | null;
   tokenVersion: number;
@@ -23,7 +23,7 @@ export interface UserProps {
 export class User {
   constructor(readonly props: UserProps) {
     assertUuid(props.id, 'User id');
-    if (!props.passwordHash) {
+    if (props.passwordHash !== null && props.passwordHash.length === 0) {
       throw new Error('User password hash cannot be empty.');
     }
     if (!Number.isInteger(props.tokenVersion) || props.tokenVersion < 1) {

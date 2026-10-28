@@ -35,6 +35,26 @@ describe('auth domain entities', () => {
     ).toThrow('Deleted users must have deletedAt set');
   });
 
+  it('allows a user without a password hash for external identity sign-in', () => {
+    expect(
+      () =>
+        new User({
+          id,
+          email: new Email('user@example.com'),
+          passwordHash: null,
+          status: UserStatus.Active,
+          emailVerifiedAt: createdAt,
+          tokenVersion: 1,
+          failedLoginCount: 0,
+          lockedUntil: null,
+          lastLoginAt: null,
+          createdAt,
+          updatedAt: createdAt,
+          deletedAt: null,
+        }),
+    ).not.toThrow();
+  });
+
   it('rejects a refresh token replacement unless the current token is revoked', () => {
     expect(
       () =>

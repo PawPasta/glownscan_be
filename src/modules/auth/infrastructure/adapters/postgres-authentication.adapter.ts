@@ -3,9 +3,12 @@ import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { DatabaseService } from '../../../../shared/database/database.service.js';
 import { ActionTokenPurpose } from '../../domain/entities/enums/auth.enums.js';
+import { FirebaseAccountConflictError } from '../../application/ports/index.js';
 import type {
   ChangePasswordPort,
   AuthUserRecord,
+  FirebaseIdentityClaims,
+  FirebaseLoginPort,
   LoginPort,
   LogoutPort,
   RefreshSessionPort,
@@ -24,6 +27,7 @@ export class PostgresAuthenticationAdapter
   implements
     RegisterAccountPort,
     VerifyEmailPort,
+    FirebaseLoginPort,
     ResendVerificationPort,
     LoginPort,
     RefreshSessionPort,
@@ -85,6 +89,141 @@ export class PostgresAuthenticationAdapter
       [email],
     );
     return rows[0] ?? null;
+  }
+
+  async findOrCreateFirebaseUser(
+    identity: FirebaseIdentityClaims,
+  ): Promise<AuthUserRecord> {
+    return this.database.transaction(async (client) => {
+      const linkedIdentity = await client.query<{ user_id: string }>(
+        `SELECT user_id FROM app_auth.user_providers
+         WHERE provider = 'FIREBASE' AND provider_user_id = $1
+         FOR UPDATE`,
+        [identity.uid],
+      );
+
+      let userId = linkedIdentity.rows[0]?.user_id;
+      if (!userId) {
+        await client.query(
+          `UPDATE app_auth.users
+           SET status = 'ACTIVE', failed_login_count = 0, locked_until = NULL
+           WHERE email = $1 AND status = 'LOCKED'
+             AND locked_until <= CURRENT_TIMESTAMP AND deleted_at IS NULL`,
+          [identity.email],
+        );
+        const existingUser = await client.query<{ id: string }>(
+          `SELECT id FROM app_auth.users
+           WHERE email = $1 AND deleted_at IS NULL
+           FOR UPDATE`,
+          [identity.email],
+        );
+        userId = existingUser.rows[0]?.id;
+
+        if (!userId) {
+          const createdUser = await client.query<{ id: string }>(
+            `INSERT INTO app_auth.users
+               (email, password_hash, status, email_verified_at)
+             VALUES ($1, NULL, 'ACTIVE', CURRENT_TIMESTAMP)
+             RETURNING id`,
+            [identity.email],
+          );
+          userId = createdUser.rows[0].id;
+          await client.query(
+            `INSERT INTO app_auth.user_roles (user_id, role_id)
+             SELECT $1, id FROM app_auth.roles WHERE code = 'USER'`,
+            [userId],
+          );
+          const userRole = await client.query(
+            `SELECT 1 FROM app_auth.user_roles ur
+             JOIN app_auth.roles r ON r.id = ur.role_id
+             WHERE ur.user_id = $1 AND r.code = 'USER'`,
+            [userId],
+          );
+          if (!userRole.rowCount) {
+            throw new Error(
+              'USER role is missing. Run the database migrations first.',
+            );
+          }
+        }
+      }
+
+      if (linkedIdentity.rows[0]) {
+        await client.query(
+          `UPDATE app_auth.users
+           SET status = 'ACTIVE', failed_login_count = 0, locked_until = NULL
+           WHERE id = $1 AND status = 'LOCKED'
+             AND locked_until <= CURRENT_TIMESTAMP AND deleted_at IS NULL`,
+          [userId],
+        );
+      }
+
+      const user = await this.findUserByIdWithClient(client, userId);
+      if (!user) {
+        throw new FirebaseAccountConflictError();
+      }
+      if (
+        user.status !== 'ACTIVE' &&
+        user.status !== 'PENDING_VERIFICATION'
+      ) {
+        return user;
+      }
+
+      await client.query(
+        `UPDATE app_auth.users
+         SET email = $2, status = 'ACTIVE',
+             email_verified_at = COALESCE(email_verified_at, CURRENT_TIMESTAMP),
+             failed_login_count = 0, locked_until = NULL
+         WHERE id = $1`,
+        [userId, identity.email],
+      );
+
+      const provider = await client.query(
+        `INSERT INTO app_auth.user_providers
+           (user_id, provider, provider_user_id, sign_in_provider,
+            provider_email, email_verified, display_name, photo_url, provider_data,
+            last_authenticated_at)
+         VALUES ($1, 'FIREBASE', $2, $3, $4, TRUE, $5, $6, $7::jsonb,
+                 CURRENT_TIMESTAMP)
+         ON CONFLICT (provider, provider_user_id)
+         DO UPDATE SET
+           sign_in_provider = EXCLUDED.sign_in_provider,
+           provider_email = EXCLUDED.provider_email,
+           email_verified = TRUE,
+           display_name = EXCLUDED.display_name,
+           photo_url = EXCLUDED.photo_url,
+           provider_data = EXCLUDED.provider_data,
+           last_authenticated_at = CURRENT_TIMESTAMP
+         WHERE app_auth.user_providers.user_id = EXCLUDED.user_id
+         RETURNING user_id`,
+        [
+          userId,
+          identity.uid,
+          identity.signInProvider,
+          identity.email,
+          identity.name,
+          identity.picture,
+          JSON.stringify(identity.providerData),
+        ],
+      );
+      if (!provider.rowCount) {
+        throw new FirebaseAccountConflictError();
+      }
+
+      await client.query(
+        `INSERT INTO app_profile.user_profiles (user_id, full_name, avatar_url)
+         VALUES ($1, LEFT(NULLIF(BTRIM($2), ''), 150), $3)
+         ON CONFLICT (user_id) DO UPDATE SET
+           full_name = COALESCE(app_profile.user_profiles.full_name, EXCLUDED.full_name),
+           avatar_url = COALESCE(app_profile.user_profiles.avatar_url, EXCLUDED.avatar_url)`,
+        [userId, identity.name, identity.picture],
+      );
+
+      const updatedUser = await this.findUserByIdWithClient(client, userId);
+      if (!updatedUser) {
+        throw new Error('Firebase user could not be loaded after linking.');
+      }
+      return updatedUser;
+    });
   }
 
   async findUserById(userId: string): Promise<AuthUserRecord | null> {

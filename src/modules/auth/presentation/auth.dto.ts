@@ -43,9 +43,15 @@ export class LoginDto {
   password!: string;
 
   @IsOptional()
+  @IsIn(['ANDROID', 'IOS', 'WEBSITE'])
+  platform?: 'ANDROID' | 'IOS' | 'WEBSITE';
+}
+
+export class FirebaseLoginDto {
   @IsString()
-  @MaxLength(255)
-  deviceUuid?: string;
+  @MinLength(1)
+  @MaxLength(8192)
+  idToken!: string;
 
   @IsOptional()
   @IsIn(['ANDROID', 'IOS', 'WEBSITE'])

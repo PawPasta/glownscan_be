@@ -1,6 +1,9 @@
 export type {
   AuthUserRecord,
   ChangePasswordPort,
+  FirebaseIdTokenVerifierPort,
+  FirebaseIdentityClaims,
+  FirebaseLoginPort,
   LoginPort,
   LogoutPort,
   RefreshSessionData,
@@ -15,6 +18,10 @@ export type {
 } from './authentication.use-case.ports.js';
 export {
   CHANGE_PASSWORD_PORT,
+  FirebaseAccountConflictError,
+  FIREBASE_ID_TOKEN_VERIFIER_PORT,
+  FIREBASE_LOGIN_PORT,
+  InvalidFirebaseIdTokenError,
   LOGIN_PORT,
   LOGOUT_PORT,
   REFRESH_SESSION_PORT,

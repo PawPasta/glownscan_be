@@ -8,6 +8,7 @@ import {
 import { AuthenticationService } from '../application/use-case/authentication.service.js';
 import {
   ChangePasswordDto,
+  FirebaseLoginDto,
   LoginDto,
   LogoutTokenDto,
   RefreshTokenDto,
@@ -46,6 +47,17 @@ export class AuthController {
     @Req() request: Request,
   ) {
     return this.authentication.login(body, {
+      ipAddress: request.ip ?? null,
+      userAgent: request.get('user-agent') ?? null,
+    });
+  }
+
+  @Post('firebase/login')
+  loginWithFirebase(
+    @Body() body: FirebaseLoginDto,
+    @Req() request: Request,
+  ) {
+    return this.authentication.loginWithFirebase(body, {
       ipAddress: request.ip ?? null,
       userAgent: request.get('user-agent') ?? null,
     });

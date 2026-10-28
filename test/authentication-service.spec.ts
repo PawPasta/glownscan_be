@@ -5,6 +5,10 @@ import { compare, hash } from 'bcryptjs';
 import { vi } from 'vitest';
 import {
   CHANGE_PASSWORD_PORT,
+  FIREBASE_ID_TOKEN_VERIFIER_PORT,
+  FIREBASE_LOGIN_PORT,
+  FirebaseAccountConflictError,
+  InvalidFirebaseIdTokenError,
   LOGIN_PORT,
   LOGOUT_PORT,
   REFRESH_SESSION_PORT,
@@ -21,6 +25,7 @@ import { UserStatus } from '../src/modules/auth/domain/entities/enums/auth.enums
 import { SmtpEmailService } from '../src/modules/auth/infrastructure/adapters/smtp-email.service.js';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   UnauthorizedException,
 } from '../src/shared/handler/http.exceptions.js';
@@ -32,6 +37,7 @@ describe('AuthenticationService', () => {
   let service: AuthenticationService;
   let repository: {
     registerUser: ReturnType<typeof vi.fn>;
+    findOrCreateFirebaseUser: ReturnType<typeof vi.fn>;
     findUserByEmail: ReturnType<typeof vi.fn>;
     findUserById: ReturnType<typeof vi.fn>;
     recordFailedLogin: ReturnType<typeof vi.fn>;
@@ -53,10 +59,14 @@ describe('AuthenticationService', () => {
     signAsync: ReturnType<typeof vi.fn>;
     verifyAsync: ReturnType<typeof vi.fn>;
   };
+  let firebaseIdTokenVerifier: {
+    verifyIdToken: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(async () => {
     repository = {
       registerUser: vi.fn().mockResolvedValue(undefined),
+      findOrCreateFirebaseUser: vi.fn(),
       findUserByEmail: vi.fn(),
       findUserById: vi.fn(),
       recordFailedLogin: vi.fn().mockResolvedValue(undefined),
@@ -78,6 +88,9 @@ describe('AuthenticationService', () => {
       signAsync: vi.fn().mockResolvedValue('signed-access-token'),
       verifyAsync: vi.fn(),
     };
+    firebaseIdTokenVerifier = {
+      verifyIdToken: vi.fn(),
+    };
 
     moduleRef = await Test.createTestingModule({
       providers: [
@@ -87,6 +100,11 @@ describe('AuthenticationService', () => {
         { provide: VERIFY_EMAIL_PORT, useValue: repository },
         { provide: RESEND_VERIFICATION_PORT, useValue: repository },
         { provide: LOGIN_PORT, useValue: repository },
+        { provide: FIREBASE_LOGIN_PORT, useValue: repository },
+        {
+          provide: FIREBASE_ID_TOKEN_VERIFIER_PORT,
+          useValue: firebaseIdTokenVerifier,
+        },
         { provide: REFRESH_SESSION_PORT, useValue: repository },
         { provide: LOGOUT_PORT, useValue: repository },
         { provide: REQUEST_PASSWORD_RESET_PORT, useValue: repository },
@@ -179,12 +197,38 @@ describe('AuthenticationService', () => {
     expect(session.tokenHash).not.toBe(result.refreshToken);
   });
 
-  it('uses the device UUID supplied by the frontend', async () => {
-    const deviceUuid = 'frontend-device-uuid';
-    repository.findUserByEmail.mockResolvedValue({
+  it('logs in with a verified Firebase identity and a backend-generated device UUID', async () => {
+    const identity = {
+      uid: 'firebase-user-123',
+      email: 'User@Example.com',
+      emailVerified: true,
+      name: 'Paw Pasta',
+      picture: 'https://example.com/avatar.png',
+      signInProvider: 'google.com',
+      providerData: {
+        iss: 'https://securetoken.google.com/glownscan-test',
+        aud: 'glownscan-test',
+        auth_time: 1793208897,
+        user_id: 'firebase-user-123',
+        sub: 'firebase-user-123',
+        iat: 1793208897,
+        exp: 1793212497,
+        email: 'User@Example.com',
+        email_verified: true,
+        firebase: {
+          identities: {
+            'google.com': ['google-user-456'],
+            email: ['User@Example.com'],
+          },
+          sign_in_provider: 'google.com',
+        },
+      },
+    };
+    firebaseIdTokenVerifier.verifyIdToken.mockResolvedValue(identity);
+    repository.findOrCreateFirebaseUser.mockResolvedValue({
       id: userId,
       email: 'user@example.com',
-      passwordHash: await hash('Glow123!', 4),
+      passwordHash: null,
       status: UserStatus.Active,
       tokenVersion: 1,
       roles: ['USER'],
@@ -192,15 +236,85 @@ describe('AuthenticationService', () => {
       lockedUntil: null,
     });
 
-    await service.login(
-      { email: 'user@example.com', password: 'Glow123!', deviceUuid },
+    const result = await service.loginWithFirebase(
+      { idToken: 'firebase-id-token', platform: 'IOS' },
       { ipAddress: null, userAgent: null },
     );
 
+    expect(firebaseIdTokenVerifier.verifyIdToken).toHaveBeenCalledWith(
+      'firebase-id-token',
+    );
+    expect(repository.findOrCreateFirebaseUser).toHaveBeenCalledWith({
+      ...identity,
+      email: 'user@example.com',
+    });
     const [session] = repository.createRefreshSession.mock.calls[0] as [
-      { deviceUuid: string },
+      { userId: string; deviceUuid: string; platform: string },
     ];
-    expect(session.deviceUuid).toBe(deviceUuid);
+    expect(session.userId).toBe(userId);
+    expect(session.deviceUuid).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    expect(session.platform).toBe('IOS');
+    expect(result.accessToken).toBe('signed-access-token');
+    expect(result.refreshToken).toHaveLength(43);
+  });
+
+  it('rejects invalid Firebase ID tokens without looking up an account', async () => {
+    firebaseIdTokenVerifier.verifyIdToken.mockRejectedValue(
+      new InvalidFirebaseIdTokenError(),
+    );
+
+    await expect(
+      service.loginWithFirebase(
+        { idToken: 'invalid-token' },
+        { ipAddress: null, userAgent: null },
+      ),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(repository.findOrCreateFirebaseUser).not.toHaveBeenCalled();
+  });
+
+  it('rejects Firebase identities without a verified email', async () => {
+    firebaseIdTokenVerifier.verifyIdToken.mockResolvedValue({
+      uid: 'firebase-user-123',
+      email: 'user@example.com',
+      emailVerified: false,
+      name: null,
+      picture: null,
+      signInProvider: 'google.com',
+      providerData: {},
+    });
+
+    await expect(
+      service.loginWithFirebase(
+        { idToken: 'firebase-id-token' },
+        { ipAddress: null, userAgent: null },
+      ),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(repository.findOrCreateFirebaseUser).not.toHaveBeenCalled();
+  });
+
+  it('rejects a Firebase identity that is already linked to another account', async () => {
+    firebaseIdTokenVerifier.verifyIdToken.mockResolvedValue({
+      uid: 'firebase-user-123',
+      email: 'user@example.com',
+      emailVerified: true,
+      name: null,
+      picture: null,
+      signInProvider: 'google.com',
+      providerData: {},
+    });
+    repository.findOrCreateFirebaseUser.mockRejectedValue(
+      new FirebaseAccountConflictError(),
+    );
+
+    await expect(
+      service.loginWithFirebase(
+        { idToken: 'firebase-id-token' },
+        { ipAddress: null, userAgent: null },
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(repository.createRefreshSession).not.toHaveBeenCalled();
   });
 
   it('rotates refresh tokens only when paired with a valid current access token', async () => {
