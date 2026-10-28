@@ -80,6 +80,15 @@ The curated catalog is intended to supply product recommendations to users. Purc
 - [Use case diagram](docs/diagram/GlowScan_Diagram-Use%20Case%20Diagram.drawio.png) — system actors and planned capabilities.
 - [User requirements diagram](docs/diagram/GlowScan_Diagram-User%20Requirements.drawio.png) — high-level information exchanged across user, admin, and analysis workflows.
 
+## Documentation
+
+Project documentation is organized in the [`docs/`](docs/) folder:
+
+- [`architecture/`](docs/architecture/) — backend architecture and source-code responsibilities. See [Backend code structure](docs/architecture/CODE_STRUCTURE.md).
+- [`aws/`](docs/aws/) — AWS deployment setup and operations, including EC2, Docker, GitHub Actions, and troubleshooting.
+- [`diagram/`](docs/diagram/) — visual references for screen flows, use cases, and user requirements.
+- [`git/`](docs/git/) — repository contribution conventions, including [commit message rules](docs/git/COMMIT.md).
+
 ## Backend structure
 
 The intended feature areas include authentication and profiles, skin assessment and analysis, personalized guidance and routines, product recommendations, progress tracking, subscriptions, and catalog administration.
