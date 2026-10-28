@@ -43,10 +43,53 @@ jobs:
       - name: Build application
         run: npm run build
 
+  changes:
+    name: Detect deployable changes
+    runs-on: ubuntu-latest
+
+    outputs:
+      app: ${{ steps.detect.outputs.app }}
+
+    steps:
+      - name: Checkout source
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Check whether application inputs changed
+        id: detect
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          BEFORE: ${{ github.event.before }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$BEFORE" =~ ^0+$ ]]; then
+            echo "app=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null && ! git fetch --no-tags --depth=1 origin "$BEFORE"; then
+            echo "Could not fetch the previous commit; building an image as a safe fallback."
+            echo "app=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          changed_files="$(git diff --name-only "$BEFORE" "$GITHUB_SHA")"
+          if grep -Eq '^(Dockerfile|\.npmrc|package\.json|package-lock\.json|nest-cli\.json|tsconfig(\.build)?\.json|src/|database/)' <<< "$changed_files"; then
+            echo "Application or image inputs changed."
+            echo "app=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No application or image inputs changed."
+            echo "app=false" >> "$GITHUB_OUTPUT"
+          fi
+
   docker:
     name: Build and Push Image
-    needs: ci
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [ci, changes]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.app == 'true'
     runs-on: ubuntu-latest
 
     permissions:

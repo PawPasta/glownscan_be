@@ -2,9 +2,10 @@
 
 ## Goal
 
-On pushes to `main`, the pipeline should validate the NestJS backend,
-build and publish a container image, and deploy the exact commit to EC2
-using SSM.
+The pipeline validates the NestJS backend on pushes and pull requests
+targeting `main`. On pushes to `main` that change application or image
+inputs, it also builds and publishes a container image and deploys the
+exact commit to EC2 using SSM.
 
 The current setup was tested far enough to pull an image through SSM and
 start the container. Always compare this guide with the workflow files
@@ -13,13 +14,22 @@ of truth.
 
 ## Intended pipeline
 
-1.  **CI:** lint, tests, and build.
-2.  **Build and publish:** build a Docker image and push it to GHCR
-    using the commit SHA as tag.
-3.  **Deploy:** configure AWS credentials, send a command using SSM, and
-    wait for command completion.
-4.  **Verify:** check deployment/health status and preserve logs on
+1.  **CI:** lint, tests, and build on every workflow run.
+2.  **Detect deployable changes:** check whether a push to `main` changes
+    application or image inputs.
+3.  **Build and publish:** only when deployable inputs changed, build a
+    Docker image and push it to GHCR using the commit SHA as tag.
+4.  **Deploy:** only after an image is published, configure AWS
+    credentials, send a command using SSM, and wait for command
+    completion.
+5.  **Verify:** check deployment/health status and preserve logs on
     failure.
+
+Changes limited to documentation, tests, or workflow files still run CI
+but do not build/push an image or deploy. The image job is triggered by
+changes to `Dockerfile`, `.npmrc`, `package.json`, `package-lock.json`,
+`nest-cli.json`, `tsconfig.json`, `tsconfig.build.json`, `src/`, or
+`database/`.
 
 The workflow should deploy only from `main` unless a deliberate release
 process says otherwise. A test workflow with `workflow_dispatch` can be
