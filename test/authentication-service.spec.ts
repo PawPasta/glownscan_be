@@ -169,11 +169,38 @@ describe('AuthenticationService', () => {
     expect(result.refreshToken).toHaveLength(43);
     expect(result).not.toHaveProperty('expiresIn');
     const [session] = repository.createRefreshSession.mock.calls[0] as [
-      { userId: string; tokenHash: string },
+      { userId: string; deviceUuid: string; tokenHash: string },
     ];
     expect(session.userId).toBe(userId);
+    expect(session.deviceUuid).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
     expect(session.tokenHash).toMatch(/^[0-9a-f]{64}$/);
     expect(session.tokenHash).not.toBe(result.refreshToken);
+  });
+
+  it('uses the device UUID supplied by the frontend', async () => {
+    const deviceUuid = 'frontend-device-uuid';
+    repository.findUserByEmail.mockResolvedValue({
+      id: userId,
+      email: 'user@example.com',
+      passwordHash: await hash('Glow123!', 4),
+      status: UserStatus.Active,
+      tokenVersion: 1,
+      roles: ['USER'],
+      failedLoginCount: 0,
+      lockedUntil: null,
+    });
+
+    await service.login(
+      { email: 'user@example.com', password: 'Glow123!', deviceUuid },
+      { ipAddress: null, userAgent: null },
+    );
+
+    const [session] = repository.createRefreshSession.mock.calls[0] as [
+      { deviceUuid: string },
+    ];
+    expect(session.deviceUuid).toBe(deviceUuid);
   });
 
   it('rotates refresh tokens only when paired with a valid current access token', async () => {
