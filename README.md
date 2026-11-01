@@ -109,6 +109,25 @@ upload-intent table. Configure
 `GLOWNSCAN_CLOUDINARY_CLOUD_NAME`, `GLOWNSCAN_CLOUDINARY_API_KEY`, and
 `GLOWNSCAN_CLOUDINARY_API_SECRET` in the backend environment.
 
+## Mobile authentication API
+
+`POST /auth/mobile/login` accepts `email`, `password`, `platform` (`ANDROID` or
+`IOS`), and `fcmToken`. A successful login stores or refreshes the FCM
+registration associated with the login device.
+
+Mobile clients can poll `POST /auth/verify-email/check` and
+`POST /auth/password/reset/check` with `{ "email": "...", "token": "..." }`.
+Both return `data.success: true` only after that one-time token has been
+successfully used on the website. An unused, expired, or replaced token returns
+`false`.
+
+Use `POST /auth/verify-email/resend` to send a replacement verification email
+and `POST /auth/password/reset/resend` to send a replacement password-reset
+email. Resending revokes the previous unused token; verification links expire
+after 24 hours and password-reset links after 1 hour. The existing
+`POST /auth/password/reset/request` endpoint performs the same password-reset
+email operation.
+
 ## Backend structure
 
 The intended feature areas include authentication and profiles, skin assessment and analysis, personalized guidance and routines, product recommendations, progress tracking, subscriptions, and catalog administration.

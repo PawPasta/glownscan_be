@@ -30,6 +30,16 @@ export class VerifyEmailDto {
   token!: string;
 }
 
+export class CheckActionTokenDto {
+  @IsEmail()
+  email!: string;
+
+  @IsString()
+  @MinLength(32)
+  @MaxLength(128)
+  token!: string;
+}
+
 export class ResendVerificationDto {
   @IsEmail()
   email!: string;
@@ -45,6 +55,22 @@ export class LoginDto {
   @IsOptional()
   @IsIn(['ANDROID', 'IOS', 'WEBSITE'])
   platform?: 'ANDROID' | 'IOS' | 'WEBSITE';
+}
+
+export class MobileLoginDto {
+  @IsEmail()
+  email!: string;
+
+  @IsString()
+  password!: string;
+
+  @IsIn(['ANDROID', 'IOS'])
+  platform!: 'ANDROID' | 'IOS';
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(4096)
+  fcmToken!: string;
 }
 
 export class FirebaseLoginDto {

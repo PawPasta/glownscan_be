@@ -5,6 +5,7 @@ import { compare, hash } from 'bcryptjs';
 import { vi } from 'vitest';
 import {
   CHANGE_PASSWORD_PORT,
+  CHECK_ACTION_TOKEN_PORT,
   FIREBASE_ID_TOKEN_VERIFIER_PORT,
   FIREBASE_LOGIN_PORT,
   FirebaseAccountConflictError,
@@ -44,6 +45,7 @@ describe('AuthenticationService', () => {
     clearFailedLogins: ReturnType<typeof vi.fn>;
     resendVerificationToken: ReturnType<typeof vi.fn>;
     verifyEmail: ReturnType<typeof vi.fn>;
+    hasConsumedActionToken: ReturnType<typeof vi.fn>;
     createActionToken: ReturnType<typeof vi.fn>;
     resetPassword: ReturnType<typeof vi.fn>;
     changePassword: ReturnType<typeof vi.fn>;
@@ -73,6 +75,7 @@ describe('AuthenticationService', () => {
       clearFailedLogins: vi.fn().mockResolvedValue(undefined),
       resendVerificationToken: vi.fn().mockResolvedValue(undefined),
       verifyEmail: vi.fn(),
+      hasConsumedActionToken: vi.fn(),
       createActionToken: vi.fn().mockResolvedValue(undefined),
       resetPassword: vi.fn(),
       changePassword: vi.fn(),
@@ -98,6 +101,7 @@ describe('AuthenticationService', () => {
         TokenService,
         { provide: REGISTER_ACCOUNT_PORT, useValue: repository },
         { provide: VERIFY_EMAIL_PORT, useValue: repository },
+        { provide: CHECK_ACTION_TOKEN_PORT, useValue: repository },
         { provide: RESEND_VERIFICATION_PORT, useValue: repository },
         { provide: LOGIN_PORT, useValue: repository },
         { provide: FIREBASE_LOGIN_PORT, useValue: repository },
@@ -195,6 +199,72 @@ describe('AuthenticationService', () => {
     );
     expect(session.tokenHash).toMatch(/^[0-9a-f]{64}$/);
     expect(session.tokenHash).not.toBe(result.refreshToken);
+  });
+
+  it('stores the FCM token when a mobile user logs in', async () => {
+    repository.findUserByEmail.mockResolvedValue({
+      id: userId,
+      email: 'user@example.com',
+      passwordHash: await hash('Glow123!', 4),
+      status: UserStatus.Active,
+      tokenVersion: 1,
+      roles: ['USER'],
+      failedLoginCount: 0,
+      lockedUntil: null,
+    });
+
+    await service.loginMobile(
+      {
+        email: 'user@example.com',
+        password: 'Glow123!',
+        platform: 'IOS',
+        fcmToken: 'fcm-registration-token',
+      },
+      { ipAddress: null, userAgent: null },
+    );
+
+    const [session] = repository.createRefreshSession.mock.calls[0] as [
+      { platform: string; fcmToken: string },
+    ];
+    expect(session.platform).toBe('IOS');
+    expect(session.fcmToken).toBe('fcm-registration-token');
+  });
+
+  it('checks whether an email action token was successfully consumed', async () => {
+    repository.hasConsumedActionToken.mockResolvedValue(true);
+
+    await expect(
+      service.checkEmailVerification({
+        email: 'User@Example.com',
+        token: 'raw-action-token',
+      }),
+    ).resolves.toEqual({ success: true });
+
+    expect(repository.hasConsumedActionToken).toHaveBeenCalledWith(
+      'user@example.com',
+      expect.any(String),
+      'VERIFY_EMAIL',
+    );
+    const [, tokenHash] =
+      repository.hasConsumedActionToken.mock.calls[0] as [string, string];
+    expect(tokenHash).not.toBe('raw-action-token');
+  });
+
+  it('checks password reset completion with the reset token purpose', async () => {
+    repository.hasConsumedActionToken.mockResolvedValue(false);
+
+    await expect(
+      service.checkPasswordReset({
+        email: 'user@example.com',
+        token: 'raw-action-token',
+      }),
+    ).resolves.toEqual({ success: false });
+
+    expect(repository.hasConsumedActionToken).toHaveBeenCalledWith(
+      'user@example.com',
+      expect.any(String),
+      'RESET_PASSWORD',
+    );
   });
 
   it('logs in with a verified Firebase identity and a backend-generated device UUID', async () => {
