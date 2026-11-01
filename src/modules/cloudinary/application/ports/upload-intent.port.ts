@@ -1,11 +1,19 @@
 import type { Uuid } from '../../../../shared/types/domain.types.js';
 
+export type CloudinaryUploadPurpose = 'AVATAR' | 'SKIN_ANALYSIS';
+
 export interface UploadIntentPort {
-  createAvatarIntent(
+  createIntent(
     userId: Uuid,
+    purpose: CloudinaryUploadPurpose,
     publicId: string,
     expiresAt: Date,
   ): Promise<void>;
+  consumeIntent(
+    userId: Uuid,
+    purpose: CloudinaryUploadPurpose,
+    publicId: string,
+  ): Promise<boolean>;
   consumeAvatarIntent(
     userId: Uuid,
     publicId: string,
