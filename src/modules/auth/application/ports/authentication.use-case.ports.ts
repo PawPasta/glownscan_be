@@ -23,6 +23,7 @@ export interface RefreshSessionData {
   userId: Uuid;
   deviceUuid: string;
   platform: 'ANDROID' | 'IOS' | 'WEBSITE';
+  fcmToken?: string;
   tokenHash: string;
   familyId: Uuid;
   expiresAt: Date;
@@ -36,6 +37,14 @@ export interface RegisterAccountPort {
 
 export interface VerifyEmailPort {
   verifyEmail(email: string, tokenHash: string): Promise<boolean>;
+}
+
+export interface CheckActionTokenPort {
+  hasConsumedActionToken(
+    email: string,
+    tokenHash: string,
+    purpose: ActionTokenPurpose,
+  ): Promise<boolean>;
 }
 
 export interface ResendVerificationPort {
@@ -134,6 +143,7 @@ export interface ValidateAccessTokenPort {
 
 export const REGISTER_ACCOUNT_PORT = Symbol('REGISTER_ACCOUNT_PORT');
 export const VERIFY_EMAIL_PORT = Symbol('VERIFY_EMAIL_PORT');
+export const CHECK_ACTION_TOKEN_PORT = Symbol('CHECK_ACTION_TOKEN_PORT');
 export const RESEND_VERIFICATION_PORT = Symbol('RESEND_VERIFICATION_PORT');
 export const LOGIN_PORT = Symbol('LOGIN_PORT');
 export const FIREBASE_LOGIN_PORT = Symbol('FIREBASE_LOGIN_PORT');

@@ -16,6 +16,7 @@ import { Email } from '../../domain/value-objects/email.vo.js';
 import { Password } from '../../domain/value-objects/password.vo.js';
 import {
   CHANGE_PASSWORD_PORT,
+  CHECK_ACTION_TOKEN_PORT,
   FIREBASE_ID_TOKEN_VERIFIER_PORT,
   FIREBASE_LOGIN_PORT,
   FirebaseAccountConflictError,
@@ -30,6 +31,7 @@ import {
   VALIDATE_ACCESS_TOKEN_PORT,
   VERIFY_EMAIL_PORT,
   type ChangePasswordPort,
+  type CheckActionTokenPort,
   type AuthUserRecord,
   type FirebaseIdTokenVerifierPort,
   type FirebaseIdentityClaims,
@@ -63,6 +65,8 @@ export class AuthenticationService {
     private readonly registerAccountPort: RegisterAccountPort,
     @Inject(VERIFY_EMAIL_PORT)
     private readonly verifyEmailPort: VerifyEmailPort,
+    @Inject(CHECK_ACTION_TOKEN_PORT)
+    private readonly checkActionTokenPort: CheckActionTokenPort,
     @Inject(RESEND_VERIFICATION_PORT)
     private readonly resendVerificationPort: ResendVerificationPort,
     @Inject(LOGIN_PORT)
@@ -137,6 +141,32 @@ export class AuthenticationService {
     return { message: 'Email verified successfully.' };
   }
 
+  async checkEmailVerification(input: {
+    email: string;
+    token: string;
+  }): Promise<{ success: boolean }> {
+    return {
+      success: await this.checkActionTokenPort.hasConsumedActionToken(
+        parseEmail(input.email).value,
+        this.tokenService.hashToken(input.token),
+        ActionTokenPurpose.VerifyEmail,
+      ),
+    };
+  }
+
+  async checkPasswordReset(input: {
+    email: string;
+    token: string;
+  }): Promise<{ success: boolean }> {
+    return {
+      success: await this.checkActionTokenPort.hasConsumedActionToken(
+        parseEmail(input.email).value,
+        this.tokenService.hashToken(input.token),
+        ActionTokenPurpose.ResetPassword,
+      ),
+    };
+  }
+
   async resendVerification(emailAddress: string): Promise<{ message: string }> {
     const email = parseEmail(emailAddress).value;
     const user = await this.resendVerificationPort.findUserByEmail(email);
@@ -166,6 +196,7 @@ export class AuthenticationService {
       email: string;
       password: string;
       platform?: string;
+      fcmToken?: string;
     },
     metadata: RequestMetadata,
   ): Promise<{ accessToken: string; refreshToken: string }> {
@@ -194,7 +225,28 @@ export class AuthenticationService {
     }
     await this.loginPort.clearFailedLogins(user.id);
 
-    return this.createLoginSession(user, input.platform, metadata);
+    return this.createLoginSession(
+      user,
+      input.platform,
+      metadata,
+      input.fcmToken,
+    );
+  }
+
+  async loginMobile(
+    input: {
+      email: string;
+      password: string;
+      platform: 'ANDROID' | 'IOS';
+      fcmToken: string;
+    },
+    metadata: RequestMetadata,
+  ): Promise<{ accessToken: string; refreshToken: string }> {
+    const fcmToken = input.fcmToken.trim();
+    if (!fcmToken) {
+      throw new BadRequestException('FCM token must not be empty.');
+    }
+    return this.login({ ...input, fcmToken }, metadata);
   }
 
   async loginWithFirebase(
@@ -376,12 +428,14 @@ export class AuthenticationService {
     user: AuthUserRecord,
     platform: string | undefined,
     metadata: RequestMetadata,
+    fcmToken?: string,
   ): Promise<{ accessToken: string; refreshToken: string }> {
     const refreshToken = this.tokenService.createOpaqueToken();
     const session: RefreshSessionData = {
       userId: user.id,
       deviceUuid: randomUUID(),
       platform: parsePlatform(platform),
+      fcmToken,
       tokenHash: this.tokenService.hashToken(refreshToken),
       familyId: randomUUID(),
       expiresAt: this.tokenService.expiryInDays(

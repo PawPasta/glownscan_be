@@ -8,8 +8,10 @@ import {
 import { AuthenticationService } from '../application/use-case/authentication.service.js';
 import {
   ChangePasswordDto,
+  CheckActionTokenDto,
   FirebaseLoginDto,
   LoginDto,
+  MobileLoginDto,
   LogoutTokenDto,
   RefreshTokenDto,
   ResendVerificationDto,
@@ -34,6 +36,11 @@ export class AuthController {
     return this.authentication.verifyEmail(body);
   }
 
+  @Post('verify-email/check')
+  checkEmailVerification(@Body() body: CheckActionTokenDto) {
+    return this.authentication.checkEmailVerification(body);
+  }
+
   @Post('verify-email/resend')
   resendVerification(
     @Body() body: ResendVerificationDto,
@@ -47,6 +54,17 @@ export class AuthController {
     @Req() request: Request,
   ) {
     return this.authentication.login(body, {
+      ipAddress: request.ip ?? null,
+      userAgent: request.get('user-agent') ?? null,
+    });
+  }
+
+  @Post('mobile/login')
+  loginMobile(
+    @Body() body: MobileLoginDto,
+    @Req() request: Request,
+  ) {
+    return this.authentication.loginMobile(body, {
       ipAddress: request.ip ?? null,
       userAgent: request.get('user-agent') ?? null,
     });
@@ -78,6 +96,18 @@ export class AuthController {
     @Body() body: ResetPasswordRequestDto,
   ) {
     return this.authentication.requestPasswordReset(body.email);
+  }
+
+  @Post('password/reset/resend')
+  resendPasswordReset(
+    @Body() body: ResetPasswordRequestDto,
+  ) {
+    return this.authentication.requestPasswordReset(body.email);
+  }
+
+  @Post('password/reset/check')
+  checkPasswordReset(@Body() body: CheckActionTokenDto) {
+    return this.authentication.checkPasswordReset(body);
   }
 
   @Post('password/reset/confirm')
