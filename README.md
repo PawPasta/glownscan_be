@@ -115,6 +115,10 @@ upload-intent table. Configure
 `IOS`), and `fcmToken`. A successful login stores or refreshes the FCM
 registration associated with the login device.
 
+`POST /auth/firebase/mobile/login` accepts `idToken`, `platform` (`ANDROID` or
+`IOS`), and `fcmToken`. Firebase mobile login verifies the ID token and stores
+or refreshes the FCM registration associated with the login device.
+
 Mobile clients can poll `POST /auth/verify-email/check` and
 `POST /auth/password/reset/check` with `{ "email": "...", "token": "..." }`.
 Both return `data.success: true` only after that one-time token has been
@@ -213,6 +217,7 @@ The auth `Password` value object requires at least six characters, including an 
 | `POST` | `/auth/verify-email/resend`    | Resend a verification link without revealing account status            |
 | `POST` | `/auth/login`                  | Return a JWT access token and opaque refresh token                     |
 | `POST` | `/auth/firebase/login`         | Verify a Firebase ID token, link/create the account, and return tokens |
+| `POST` | `/auth/firebase/mobile/login`  | Firebase mobile login; also register the device FCM token              |
 | `POST` | `/auth/refresh`                | Rotate a refresh token and return a new access/refresh token pair      |
 | `POST` | `/auth/logout`                 | Revoke the refresh token family                                        |
 | `POST` | `/auth/password/reset/request` | Send a reset link without revealing whether the email exists           |

@@ -84,6 +84,21 @@ export class FirebaseLoginDto {
   platform?: 'ANDROID' | 'IOS' | 'WEBSITE';
 }
 
+export class FirebaseMobileLoginDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(8192)
+  idToken!: string;
+
+  @IsIn(['ANDROID', 'IOS'])
+  platform!: 'ANDROID' | 'IOS';
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(4096)
+  fcmToken!: string;
+}
+
 export class RefreshTokenDto {
   @IsString()
   @MinLength(1)

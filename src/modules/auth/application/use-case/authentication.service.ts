@@ -250,7 +250,7 @@ export class AuthenticationService {
   }
 
   async loginWithFirebase(
-    input: { idToken: string; platform?: string },
+    input: { idToken: string; platform?: string; fcmToken?: string },
     metadata: RequestMetadata,
   ): Promise<{ accessToken: string; refreshToken: string }> {
     let identity: FirebaseIdentityClaims;
@@ -306,7 +306,28 @@ export class AuthenticationService {
     }
 
     await this.loginPort.clearFailedLogins(user.id);
-    return this.createLoginSession(user, input.platform, metadata);
+    return this.createLoginSession(
+      user,
+      input.platform,
+      metadata,
+      input.fcmToken,
+    );
+  }
+
+  async loginWithFirebaseMobile(
+    input: {
+      idToken: string;
+      platform: 'ANDROID' | 'IOS';
+      fcmToken: string;
+    },
+    metadata: RequestMetadata,
+  ): Promise<{ accessToken: string; refreshToken: string }> {
+    const fcmToken = input.fcmToken.trim();
+    if (!fcmToken) {
+      throw new BadRequestException('FCM token must not be empty.');
+    }
+
+    return this.loginWithFirebase({ ...input, fcmToken }, metadata);
   }
 
   async refresh(input: {
