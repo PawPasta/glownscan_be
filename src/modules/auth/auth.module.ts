@@ -4,6 +4,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { DatabaseModule } from '../../shared/database/database.module.js';
 import {
   CHANGE_PASSWORD_PORT,
+  CHECK_ACTION_TOKEN_PORT,
   FIREBASE_ID_TOKEN_VERIFIER_PORT,
   FIREBASE_LOGIN_PORT,
   LOGIN_PORT,
@@ -58,6 +59,10 @@ import { JwtAuthGuard } from '../../shared/security/jwt-auth.guard.js';
     },
     {
       provide: VERIFY_EMAIL_PORT,
+      useExisting: PostgresAuthenticationAdapter,
+    },
+    {
+      provide: CHECK_ACTION_TOKEN_PORT,
       useExisting: PostgresAuthenticationAdapter,
     },
     {

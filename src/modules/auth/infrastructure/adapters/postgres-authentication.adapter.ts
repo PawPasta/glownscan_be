@@ -6,6 +6,7 @@ import { ActionTokenPurpose } from '../../domain/entities/enums/auth.enums.js';
 import { FirebaseAccountConflictError } from '../../application/ports/index.js';
 import type {
   ChangePasswordPort,
+  CheckActionTokenPort,
   AuthUserRecord,
   FirebaseIdentityClaims,
   FirebaseLoginPort,
@@ -26,6 +27,7 @@ import type {
 export class PostgresAuthenticationAdapter
   implements
     RegisterAccountPort,
+    CheckActionTokenPort,
     VerifyEmailPort,
     FirebaseLoginPort,
     ResendVerificationPort,
@@ -291,6 +293,23 @@ export class PostgresAuthenticationAdapter
     });
   }
 
+  async hasConsumedActionToken(
+    email: string,
+    tokenHash: string,
+    purpose: ActionTokenPurpose,
+  ): Promise<boolean> {
+    const result = await this.database.query(
+      `SELECT 1
+       FROM app_auth.action_tokens t
+       JOIN app_auth.users u ON u.id = t.user_id
+       WHERE u.email = $1 AND t.token_hash = $2 AND t.purpose = $3
+         AND t.consumed_at IS NOT NULL AND t.revoked_at IS NULL
+         AND u.deleted_at IS NULL`,
+      [email, tokenHash, purpose],
+    );
+    return Boolean(result.rowCount);
+  }
+
   async resendVerificationToken(
     userId: string,
     tokenHash: string,
@@ -423,6 +442,27 @@ export class PostgresAuthenticationAdapter
          WHERE user_id = $1 AND device_uuid = $2`,
         [data.userId, data.deviceUuid],
       );
+      if (data.fcmToken) {
+        await client.query(
+          `UPDATE app_auth.push_registrations
+           SET status = 'INACTIVE'
+           WHERE device_id = $1 AND status = 'ACTIVE'`,
+          [device.rows[0].id],
+        );
+        await client.query(
+          `INSERT INTO app_auth.push_registrations
+             (device_id, registration_type, registration_value)
+           VALUES ($1, 'FCM_TOKEN', $2)
+           ON CONFLICT (registration_value)
+           DO UPDATE SET
+             device_id = EXCLUDED.device_id,
+             registration_type = EXCLUDED.registration_type,
+             notification_enabled = TRUE,
+             status = 'ACTIVE',
+             last_registered_at = CURRENT_TIMESTAMP`,
+          [device.rows[0].id, data.fcmToken],
+        );
+      }
       await client.query(
         `INSERT INTO app_auth.refresh_tokens
            (user_id, device_id, token_hash, token_family_id, expires_at, ip_address, user_agent)
