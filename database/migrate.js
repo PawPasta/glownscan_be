@@ -160,10 +160,44 @@ async function runMigrations(client, mode) {
   }
 }
 
+export async function resetApplicationSchemas(client) {
+  const { rows } = await client.query(
+    'SELECT current_database() AS database_name',
+  );
+  const databaseName = rows[0].database_name;
+
+  await client.query('BEGIN');
+  try {
+    await client.query('DROP SCHEMA IF EXISTS app_skin_analysis CASCADE');
+    await client.query('DROP SCHEMA IF EXISTS app_cloudinary CASCADE');
+    await client.query('DROP SCHEMA IF EXISTS app_profile CASCADE');
+    await client.query('DROP SCHEMA IF EXISTS app_auth CASCADE');
+    await client.query('DROP TABLE IF EXISTS public.schema_migrations');
+    await client.query('COMMIT');
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [error, rollbackError],
+        'Database reset failed and rollback also failed.',
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+
+  console.log(
+    `Dropped application schemas and migration history in database "${databaseName}".`,
+  );
+}
+
 async function main() {
   const mode = process.argv[2] ?? 'up';
-  if (!['up', 'status'].includes(mode)) {
-    throw new Error(`Unknown command "${mode}". Use "up" or "status".`);
+  if (!['up', 'status', 'reset'].includes(mode)) {
+    throw new Error(
+      `Unknown command "${mode}". Use "up", "status", or "reset".`,
+    );
   }
 
   const connectionString =
@@ -184,7 +218,12 @@ async function main() {
       lockId,
     ]);
     lockAcquired = true;
-    await runMigrations(client, mode);
+    if (mode === 'reset') {
+      await resetApplicationSchemas(client);
+      await runMigrations(client, 'up');
+    } else {
+      await runMigrations(client, mode);
+    }
   } finally {
     try {
       if (lockAcquired) {

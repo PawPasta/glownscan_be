@@ -17,7 +17,7 @@ $$;
 CREATE TABLE IF NOT EXISTS app_auth.users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email VARCHAR(320) NOT NULL,
-    password_hash TEXT NOT NULL,
+    password_hash TEXT,
     status VARCHAR(30) NOT NULL DEFAULT 'PENDING_VERIFICATION',
     email_verified_at TIMESTAMPTZ,
     token_version INTEGER NOT NULL DEFAULT 1 CHECK (token_version >= 1),
@@ -34,6 +34,26 @@ CREATE TABLE IF NOT EXISTS app_auth.users (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_users_active_email ON app_auth.users(email) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS ix_users_status ON app_auth.users(status);
+
+CREATE TABLE IF NOT EXISTS app_auth.user_providers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES app_auth.users(id) ON DELETE CASCADE,
+    provider VARCHAR(30) NOT NULL CHECK (provider = 'FIREBASE'),
+    provider_user_id VARCHAR(128) NOT NULL CHECK (btrim(provider_user_id) <> ''),
+    sign_in_provider VARCHAR(100) NOT NULL CHECK (btrim(sign_in_provider) <> ''),
+    provider_email VARCHAR(320) NOT NULL,
+    email_verified BOOLEAN NOT NULL DEFAULT TRUE CHECK (email_verified),
+    display_name TEXT,
+    photo_url TEXT,
+    provider_data JSONB NOT NULL DEFAULT '{}'::jsonb
+        CHECK (jsonb_typeof(provider_data) = 'object'),
+    last_authenticated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uq_user_providers_identity UNIQUE (provider, provider_user_id),
+    CONSTRAINT uq_user_providers_user_provider UNIQUE (user_id, provider)
+);
+CREATE INDEX IF NOT EXISTS ix_user_providers_user ON app_auth.user_providers(user_id);
 
 CREATE TABLE IF NOT EXISTS app_auth.roles (
     id SMALLINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -181,13 +201,17 @@ CREATE TRIGGER trg_devices_updated BEFORE UPDATE ON app_auth.user_devices
 DROP TRIGGER IF EXISTS trg_push_updated ON app_auth.push_registrations;
 CREATE TRIGGER trg_push_updated BEFORE UPDATE ON app_auth.push_registrations
     FOR EACH ROW EXECUTE FUNCTION app_auth.set_updated_at();
+DROP TRIGGER IF EXISTS trg_user_providers_updated ON app_auth.user_providers;
+CREATE TRIGGER trg_user_providers_updated BEFORE UPDATE ON app_auth.user_providers
+    FOR EACH ROW EXECUTE FUNCTION app_auth.set_updated_at();
 
 DO $$
 DECLARE table_name text;
 BEGIN
     FOREACH table_name IN ARRAY ARRAY[
         'users', 'roles', 'permissions', 'user_roles', 'role_permissions',
-        'user_devices', 'refresh_tokens', 'push_registrations', 'action_tokens', 'auth_audit_logs'
+        'user_devices', 'refresh_tokens', 'push_registrations', 'action_tokens',
+        'auth_audit_logs', 'user_providers'
     ]
     LOOP
         EXECUTE format('ALTER TABLE app_auth.%I ENABLE ROW LEVEL SECURITY', table_name);

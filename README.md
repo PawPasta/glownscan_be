@@ -2,7 +2,7 @@
 
 GlowScan is a personalized skincare application. This repository contains the backend API intended to support the mobile app and admin dashboard.
 
-> **Implementation status:** Product flows below describe planned system behavior. The backend now includes authentication endpoints and PostgreSQL integration; skincare analysis, routines, recommendations, subscriptions, and catalog features remain planned.
+> **Implementation status:** The backend includes authentication, profile, and PostgreSQL integration. A first skin-analysis endpoint can send a user's Cloudinary image to Gemini and return structured visual scores and face-overlay coordinates. Persisted analysis history, routines, recommendations, subscriptions, and catalog features remain planned.
 
 ## Product flows
 
@@ -101,19 +101,65 @@ To set an avatar, call `POST /profile/avatar/upload-intent`, upload the image
 directly to Cloudinary using the returned `cloudName`, `apiKey`, `timestamp`,
 `publicId`, and `signature`, then call `POST /profile/avatar/confirm` with
 Cloudinary's `public_id`, `version`, `signature`, and `secure_url`. The upload
-intent metadata is stored in `app_cloudinary.upload_intents`; it expires after
-10 minutes and can only be consumed once. On confirmation, the backend
+intent metadata is stored in `app_cloudinary.upload_intents` with purpose
+`AVATAR`; it expires after 10 minutes and can only be consumed once. Creating a
+new intent revokes the previous pending avatar intent. On confirmation, the backend
 atomically consumes that intent and updates `app_profile.user_profiles.avatar_url`
 with Cloudinary's verified `secure_url`. The image URL is not stored in the
 upload-intent table. Configure
 `GLOWNSCAN_CLOUDINARY_CLOUD_NAME`, `GLOWNSCAN_CLOUDINARY_API_KEY`, and
 `GLOWNSCAN_CLOUDINARY_API_SECRET` in the backend environment.
 
+## Skin analysis API
+
+Configure `GLOWNSCAN_GEMINI_API_KEY`, optional `GLOWNSCAN_GEMINI_MODEL`
+(defaults to `gemini-2.5-flash`), optional `GLOWNSCAN_GEMINI_BASE_URL`
+(defaults to `https://generativelanguage.googleapis.com/v1beta/models`), and
+`GLOWNSCAN_CLOUDINARY_CLOUD_NAME`.
+Before uploading a JPEG, PNG, or WebP image to Cloudinary, call
+`POST /skin-analysis/upload-intent` with the access token. The response
+contains the Cloudinary `cloudName`, `apiKey`, `timestamp`, `publicId`, and
+`signature`; use them to upload directly to Cloudinary. The backend stores a
+10-minute, one-time `SKIN_ANALYSIS` intent in the same
+`app_cloudinary.upload_intents` table used for avatars. A new intent revokes the
+previous pending skin-analysis intent, without revoking an avatar intent.
+After Cloudinary confirms the upload, call `POST /skin-analysis/analyze`
+with the access token and Cloudinary's `public_id`, `version`, `signature`, and
+`secure_url`:
+
+```json
+{
+  "publicId": "glownscan/skin-analysis/{authenticated-user-id}/{uuid}",
+  "version": 1234567890,
+  "signature": "<cloudinary-response-signature>",
+  "secureUrl": "https://res.cloudinary.com/<cloud-name>/image/upload/v1234567890/glownscan/skin-analysis/..."
+}
+```
+
+The backend verifies the Cloudinary response signature and exact URL, consumes
+the matching unexpired upload intent once, downloads the image, sends it to
+Gemini, validates the returned JSON, and returns the analysis. It does not
+analyze images based on an unverified URL. This first version does not persist
+the analysis result.
+
+The response contains a 0–100 overall visible-skin score, 0–100 scores for
+seven visible concern metrics, confidence and visibility for each metric,
+regional scores, observations, and `highlights` with normalized image
+coordinates (`x`, `y`, and `radius`, each in the 0–1000 coordinate space).
+Highlights can be used by the mobile app to draw emphasis markers on the
+original image. Scores are visual estimates, not medical diagnoses or
+instrument measurements. The client should obtain the user's consent before
+uploading or analyzing a facial image.
+
 ## Mobile authentication API
 
 `POST /auth/mobile/login` accepts `email`, `password`, `platform` (`ANDROID` or
 `IOS`), and `fcmToken`. A successful login stores or refreshes the FCM
 registration associated with the login device.
+
+`POST /auth/firebase/mobile/login` accepts `idToken`, `platform` (`ANDROID` or
+`IOS`), and `fcmToken`. Firebase mobile login verifies the ID token and stores
+or refreshes the FCM registration associated with the login device.
 
 Mobile clients can poll `POST /auth/verify-email/check` and
 `POST /auth/password/reset/check` with `{ "email": "...", "token": "..." }`.
@@ -158,24 +204,24 @@ registration request walkthrough—see [Backend code structure](docs/architectur
 
 Key application and shared files:
 
-| Path                                  | Purpose                                                                                                                            |
-| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `src/main.ts`                         | Creates and starts the NestJS application.                                                                                         |
-| `src/app.module.ts`                   | Root NestJS module with database and authentication modules.                                                                       |
-| `src/modules/auth/application/use-case/authentication.service.ts` | Coordinates authentication use cases through application-owned outbound ports. |
-| `src/modules/auth/application/ports/authentication.use-case.ports.ts` | Defines the contracts and DI tokens required by authentication use cases. |
-| `src/modules/auth/infrastructure/adapters/postgres-authentication.adapter.ts` | Implements authentication persistence and transactional SQL operations. |
-| `src/modules/auth/infrastructure/adapters/smtp-email.service.ts` | Sends verification and password-reset emails. |
-| `src/modules/auth/presentation/`     | HTTP routes, request validation DTOs, and JWT authentication guard.                                                                |
-| `src/modules/auth/domain/`            | Auth entities, enums, and email/password value objects.                                                                            |
-| `src/shared/`                         | Reusable API, CORS/Swagger configuration, database, exception, security, and type helpers.                                         |
-| `database/migrations/`                | Ordered, versioned PostgreSQL migrations.                                                                                          |
-| `database/migrate.js`                 | CLI that tracks and applies database migrations.                                                                                   |
-| `test/`                               | Vitest unit tests and end-to-end test setup.                                                                                        |
+| Path                                                                          | Purpose                                                                                    |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `src/main.ts`                                                                 | Creates and starts the NestJS application.                                                 |
+| `src/app.module.ts`                                                           | Root NestJS module with database and authentication modules.                               |
+| `src/modules/auth/application/use-case/authentication.service.ts`             | Coordinates authentication use cases through application-owned outbound ports.             |
+| `src/modules/auth/application/ports/authentication.use-case.ports.ts`         | Defines the contracts and DI tokens required by authentication use cases.                  |
+| `src/modules/auth/infrastructure/adapters/postgres-authentication.adapter.ts` | Implements authentication persistence and transactional SQL operations.                    |
+| `src/modules/auth/infrastructure/adapters/smtp-email.service.ts`              | Sends verification and password-reset emails.                                              |
+| `src/modules/auth/presentation/`                                              | HTTP routes, request validation DTOs, and JWT authentication guard.                        |
+| `src/modules/auth/domain/`                                                    | Auth entities, enums, and email/password value objects.                                    |
+| `src/shared/`                                                                 | Reusable API, CORS/Swagger configuration, database, exception, security, and type helpers. |
+| `database/migrations/`                                                        | Ordered, versioned PostgreSQL migrations.                                                  |
+| `database/migrate.js`                                                         | CLI that tracks and applies database migrations.                                           |
+| `test/`                                                                       | Vitest unit tests and end-to-end test setup.                                               |
 
 ## Database design
 
-The migrations create schemas for authentication and authorization (`app_auth`), user and skin profiles (`app_profile`), image upload intents (`app_cloudinary`), and skin analysis (`app_skin_analysis`), plus initial auth reference data.
+The migrations create schemas for authentication and authorization (`app_auth`), user and skin profiles (`app_profile`), shared purpose-based image upload intents (`app_cloudinary`), and skin analysis (`app_skin_analysis`), plus initial auth reference data. Avatar and skin-analysis uploads use the same upload-intent table and service; the skin-analysis schema does not own upload-intent storage.
 
 The migration runner connects to PostgreSQL using `GLOWNSCAN_DATABASE_URL` (`DATABASE_URL` is a fallback). It records applied versions and SHA-256 checksums in `public.schema_migrations`, applies each migration in its own transaction, and uses a PostgreSQL advisory lock to prevent concurrent runs. Migrations are run explicitly from the CLI; the NestJS application does not apply them at startup.
 
@@ -213,6 +259,7 @@ The auth `Password` value object requires at least six characters, including an 
 | `POST` | `/auth/verify-email/resend`    | Resend a verification link without revealing account status            |
 | `POST` | `/auth/login`                  | Return a JWT access token and opaque refresh token                     |
 | `POST` | `/auth/firebase/login`         | Verify a Firebase ID token, link/create the account, and return tokens |
+| `POST` | `/auth/firebase/mobile/login`  | Firebase mobile login; also register the device FCM token              |
 | `POST` | `/auth/refresh`                | Rotate a refresh token and return a new access/refresh token pair      |
 | `POST` | `/auth/logout`                 | Revoke the refresh token family                                        |
 | `POST` | `/auth/password/reset/request` | Send a reset link without revealing whether the email exists           |
@@ -241,16 +288,15 @@ npm run db:migrate
 
 The initial migration sequence is:
 
-| Version | Description                                                |
-| ------- | ---------------------------------------------------------- |
-| V001    | Authentication and authorization schema                    |
-| V002    | User and skin profile schema                               |
-| V003    | Seed auth roles, permissions, and role-permission mappings |
-| V004    | Cloudinary upload intents                                  |
-| V005    | Skin analysis schema                                       |
-| V006    | Firebase provider identities and nullable user passwords  |
+| Version | Description                                                                              |
+| ------- | ---------------------------------------------------------------------------------------- |
+| V001    | Authentication, authorization, Firebase provider identities, and nullable user passwords |
+| V002    | User and skin profile schema                                                             |
+| V003    | Seed auth roles, permissions, and role-permission mappings                               |
+| V004    | Cloudinary upload intents                                                                |
+| V005    | Skin analysis schema                                                                     |
 
-Add a new `V<number>__description.sql` file for future changes; do not edit a migration after it has been applied. The runner detects missing or modified applied migrations and stops with an error. These migrations are intended for a fresh database; if the old combined SQL script was already run, do not apply these migrations blindly because the database has no recorded baseline. Back up and baseline that database deliberately before using the runner.
+Add a new `V<number>__description.sql` file for future changes; do not edit a migration after it has been applied. The runner detects missing or modified applied migrations and stops with an error. The current V001–V005 set has been rebuilt and requires a clean schema. `npm run db:migrate:reset` drops the application schemas (`app_auth`, `app_profile`, `app_cloudinary`, `app_skin_analysis`) and `public.schema_migrations`, then reapplies all migrations. It does not drop unrelated schemas, but is destructive and has no confirmation guard; verify `GLOWNSCAN_DATABASE_URL` and use only for demo/development data. Never run it against production or a database whose data must be retained. If the old combined SQL script was already run, do not apply these migrations blindly; back up and baseline that database deliberately.
 
 The migration role should be separate from the application's runtime credentials. The schemas enable row-level security and revoke access from `PUBLIC`; configure the required database grants and RLS policies for the runtime role as part of application integration.
 

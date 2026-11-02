@@ -10,6 +10,7 @@ import {
   ChangePasswordDto,
   CheckActionTokenDto,
   FirebaseLoginDto,
+  FirebaseMobileLoginDto,
   LoginDto,
   MobileLoginDto,
   LogoutTokenDto,
@@ -76,6 +77,17 @@ export class AuthController {
     @Req() request: Request,
   ) {
     return this.authentication.loginWithFirebase(body, {
+      ipAddress: request.ip ?? null,
+      userAgent: request.get('user-agent') ?? null,
+    });
+  }
+
+  @Post('firebase/mobile/login')
+  loginMobileWithFirebase(
+    @Body() body: FirebaseMobileLoginDto,
+    @Req() request: Request,
+  ) {
+    return this.authentication.loginWithFirebaseMobile(body, {
       ipAddress: request.ip ?? null,
       userAgent: request.get('user-agent') ?? null,
     });

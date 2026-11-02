@@ -62,17 +62,22 @@ describe('CloudinaryUploadIntentService', () => {
   let service: CloudinaryUploadIntentService;
   let config: ConfigService;
   let createAvatarUploadIntent: ReturnType<
-    typeof vi.fn<UploadIntentPort['createAvatarIntent']>
+    typeof vi.fn<UploadIntentPort['createIntent']>
   >;
   let completeAvatarUpload: ReturnType<
     typeof vi.fn<UploadIntentPort['consumeAvatarIntent']>
   >;
+  let consumeIntent: ReturnType<
+    typeof vi.fn<UploadIntentPort['consumeIntent']>
+  >;
 
   beforeEach(() => {
-    createAvatarUploadIntent = vi.fn<UploadIntentPort['createAvatarIntent']>();
+    createAvatarUploadIntent = vi.fn<UploadIntentPort['createIntent']>();
     completeAvatarUpload = vi.fn<UploadIntentPort['consumeAvatarIntent']>();
+    consumeIntent = vi.fn<UploadIntentPort['consumeIntent']>();
     port = {
-      createAvatarIntent: createAvatarUploadIntent,
+      createIntent: createAvatarUploadIntent,
+      consumeIntent,
       consumeAvatarIntent: completeAvatarUpload,
     };
     config = new ConfigService({
@@ -96,13 +101,28 @@ describe('CloudinaryUploadIntentService', () => {
     });
     expect(createAvatarUploadIntent).toHaveBeenCalledWith(
       userId,
+      'AVATAR',
       result.publicId,
       expect.any(Date),
     );
-    const expiresAt = createAvatarUploadIntent.mock.calls[0][2];
+    const expiresAt = createAvatarUploadIntent.mock.calls[0][3];
     expect(expiresAt.getTime()).toBeGreaterThan(Date.now());
     expect(expiresAt.getTime()).toBeLessThanOrEqual(
       Date.now() + 10 * 60 * 1000,
+    );
+  });
+
+  it('creates skin-analysis upload intents through the shared Cloudinary port', async () => {
+    const result = await service.createSkinAnalysisUploadIntent(userId);
+
+    expect(result.publicId).toMatch(
+      new RegExp(`^glownscan/skin-analysis/${userId}/[0-9a-f-]{36}$`),
+    );
+    expect(createAvatarUploadIntent).toHaveBeenCalledWith(
+      userId,
+      'SKIN_ANALYSIS',
+      result.publicId,
+      expect.any(Date),
     );
   });
 
@@ -159,6 +179,50 @@ describe('CloudinaryUploadIntentService', () => {
       }),
     ).rejects.toThrow('Avatar upload intent is invalid or expired.');
   });
+
+  it('confirms and consumes a skin-analysis upload intent through the shared port', async () => {
+    const publicId = `glownscan/skin-analysis/${userId}/8a875514-1150-48d2-8d90-b2d55c9c8820`;
+    const secureUrl = `https://res.cloudinary.com/demo/image/upload/v123/${publicId}.jpg`;
+    const signature = signCloudinaryParams(
+      { public_id: publicId, version: 123 },
+      'api-secret',
+    );
+    consumeIntent.mockResolvedValue(true);
+
+    await expect(
+      service.confirmSkinAnalysisUpload(userId, {
+        publicId,
+        version: 123,
+        signature,
+        secureUrl,
+      }),
+    ).resolves.toBe(secureUrl);
+    expect(consumeIntent).toHaveBeenCalledWith(
+      userId,
+      'SKIN_ANALYSIS',
+      publicId,
+    );
+  });
+
+  it('rejects skin-analysis assets outside the requesting user folder', async () => {
+    const consume = vi.fn<UploadIntentPort['consumeIntent']>();
+    const isolatedService = new CloudinaryUploadIntentService(
+      { ...port, consumeIntent: consume },
+      config,
+    );
+
+    await expect(
+      isolatedService.confirmSkinAnalysisUpload(userId, {
+        publicId:
+          'glownscan/skin-analysis/another-user/8a875514-1150-48d2-8d90-b2d55c9c8820',
+        version: 123,
+        signature: '0'.repeat(40),
+        secureUrl:
+          'https://res.cloudinary.com/demo/image/upload/v123/glownscan/skin-analysis/another-user/8a875514-1150-48d2-8d90-b2d55c9c8820.jpg',
+      }),
+    ).rejects.toThrow('Cloudinary upload response is invalid.');
+    expect(consume).not.toHaveBeenCalled();
+  });
 });
 
 describe('PostgresUploadIntentAdapter', () => {
@@ -169,6 +233,7 @@ describe('PostgresUploadIntentAdapter', () => {
   function createAdapter(query: ReturnType<typeof vi.fn>) {
     const client = { query } as unknown as PoolClient;
     const database = {
+      query,
       transaction: <T>(work: (client: PoolClient) => Promise<T>) =>
         work(client),
     } as unknown as DatabaseService;
@@ -177,32 +242,42 @@ describe('PostgresUploadIntentAdapter', () => {
 
   it('stores only intent metadata in app_cloudinary.upload_intents', async () => {
     const { adapter, query } = createAdapter(
-      vi
-        .fn()
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [{ id: profileId }] })
-        .mockResolvedValue({ rows: [], rowCount: 1 }),
+      vi.fn().mockResolvedValue({ rows: [], rowCount: 1 }),
     );
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
     const publicId = `glownscan/avatars/${userId}/8a875514-1150-48d2-8d90-b2d55c9c8820`;
 
-    await adapter.createAvatarIntent(userId, publicId, expiresAt);
+    await adapter.createIntent(userId, 'AVATAR', publicId, expiresAt);
 
     expect(query).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE app_cloudinary.upload_intents'),
-      [userId],
+      [userId, 'AVATAR'],
     );
     expect(query).toHaveBeenCalledWith(
       expect.stringContaining(
-        'INSERT INTO app_cloudinary.upload_intents\n           (user_id, public_id, expires_at)',
+        'INSERT INTO app_cloudinary.upload_intents\n           (user_id, purpose, public_id, expires_at)',
       ),
-      [userId, publicId, expiresAt],
+      [userId, 'AVATAR', publicId, expiresAt],
     );
     expect(
-      query.mock.calls.some(([sql]) =>
-        String(sql).includes('secure_url'),
-      ),
+      query.mock.calls.some(([sql]) => String(sql).includes('secure_url')),
     ).toBe(false);
+  });
+
+  it('consumes a purpose-specific Cloudinary intent once', async () => {
+    const query = vi.fn().mockResolvedValue({ rowCount: 1 });
+    const { adapter } = createAdapter(query);
+    const publicId = `glownscan/skin-analysis/${userId}/8a875514-1150-48d2-8d90-b2d55c9c8820`;
+
+    await expect(
+      adapter.consumeIntent(userId, 'SKIN_ANALYSIS', publicId),
+    ).resolves.toBe(true);
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'WHERE user_id = $1 AND purpose = $2 AND public_id = $3',
+      ),
+      [userId, 'SKIN_ANALYSIS', publicId],
+    );
   });
 
   it('consumes the intent and updates avatar_url in the same transaction', async () => {
@@ -216,8 +291,7 @@ describe('PostgresUploadIntentAdapter', () => {
         .mockResolvedValueOnce({ rows: [], rowCount: 1 }),
     );
     const publicId = `glownscan/avatars/${userId}/8a875514-1150-48d2-8d90-b2d55c9c8820`;
-    const secureUrl =
-      `https://res.cloudinary.com/demo/image/upload/v123/${publicId}.jpg`;
+    const secureUrl = `https://res.cloudinary.com/demo/image/upload/v123/${publicId}.jpg`;
 
     await expect(
       adapter.consumeAvatarIntent(userId, publicId, secureUrl),

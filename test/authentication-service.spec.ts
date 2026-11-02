@@ -330,6 +330,57 @@ describe('AuthenticationService', () => {
     expect(result.refreshToken).toHaveLength(43);
   });
 
+  it('stores the FCM token when a mobile user logs in with Firebase', async () => {
+    firebaseIdTokenVerifier.verifyIdToken.mockResolvedValue({
+      uid: 'firebase-user-123',
+      email: 'user@example.com',
+      emailVerified: true,
+      name: null,
+      picture: null,
+      signInProvider: 'google.com',
+      providerData: {},
+    });
+    repository.findOrCreateFirebaseUser.mockResolvedValue({
+      id: userId,
+      email: 'user@example.com',
+      passwordHash: null,
+      status: UserStatus.Active,
+      tokenVersion: 1,
+      roles: ['USER'],
+      failedLoginCount: 0,
+      lockedUntil: null,
+    });
+
+    await service.loginWithFirebaseMobile(
+      {
+        idToken: 'firebase-id-token',
+        platform: 'ANDROID',
+        fcmToken: ' fcm-registration-token ',
+      },
+      { ipAddress: null, userAgent: null },
+    );
+
+    const [session] = repository.createRefreshSession.mock.calls[0] as [
+      { platform: string; fcmToken: string },
+    ];
+    expect(session.platform).toBe('ANDROID');
+    expect(session.fcmToken).toBe('fcm-registration-token');
+  });
+
+  it('rejects blank FCM tokens on Firebase mobile login', async () => {
+    await expect(
+      service.loginWithFirebaseMobile(
+        {
+          idToken: 'firebase-id-token',
+          platform: 'IOS',
+          fcmToken: '   ',
+        },
+        { ipAddress: null, userAgent: null },
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(firebaseIdTokenVerifier.verifyIdToken).not.toHaveBeenCalled();
+  });
+
   it('rejects invalid Firebase ID tokens without looking up an account', async () => {
     firebaseIdTokenVerifier.verifyIdToken.mockRejectedValue(
       new InvalidFirebaseIdTokenError(),
