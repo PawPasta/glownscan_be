@@ -18,6 +18,14 @@ export type SkinAnalysisObservationType =
   | 'VISIBLE_OILINESS'
   | 'UNEAVEN_TEXTURE';
 
+export type SkinAnalysisSkinType =
+  | 'NORMAL'
+  | 'DRY'
+  | 'OILY'
+  | 'COMBINATION';
+
+export type SkinAnalysisSensitivityLevel = 'LOW' | 'MEDIUM' | 'HIGH';
+
 export interface SkinAnalysisAssessment {
   score: number;
   confidence: number;
@@ -53,6 +61,11 @@ export interface SkinAnalysisResult {
     overallSkinScore: number;
     confidence: number;
     notes: string[];
+  };
+  skinProfile: {
+    skinType: SkinAnalysisSkinType | null;
+    sensitivityLevel: SkinAnalysisSensitivityLevel | null;
+    notes: string | null;
   };
   metrics: Record<SkinAnalysisMetric, SkinAnalysisAssessment>;
   regions: Record<
