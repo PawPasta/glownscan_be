@@ -1,11 +1,49 @@
 import {
+  IsDateString,
   IsEmail,
   IsIn,
+  IsInt,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
+  Min,
   MinLength,
 } from 'class-validator';
+
+export class UpdateUserProfileDto {
+  @IsOptional()
+  @IsString()
+  @Matches(/\S/)
+  @MaxLength(150)
+  fullName?: string | null;
+
+  @IsOptional()
+  @IsDateString({ strict: true })
+  dateOfBirth?: string | null;
+
+  @IsOptional()
+  @IsIn(['MALE', 'FEMALE', 'OTHER', 'PREFER_NOT_TO_SAY'])
+  gender?: 'MALE' | 'FEMALE' | 'OTHER' | 'PREFER_NOT_TO_SAY' | null;
+}
+
+export class ConfirmAvatarUploadDto {
+  @IsString()
+  @Matches(/^glownscan\/avatars\/[0-9a-f-]{36}\/[0-9a-f-]{36}$/i)
+  publicId!: string;
+
+  @IsInt()
+  @Min(1)
+  version!: number;
+
+  @IsString()
+  @Matches(/^[a-f0-9]{40}$/i)
+  signature!: string;
+
+  @IsString()
+  @MaxLength(2048)
+  secureUrl!: string;
+}
 
 export class RegisterDto {
   @IsEmail()

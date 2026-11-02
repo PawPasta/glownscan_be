@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { DatabaseModule } from '../../shared/database/database.module.js';
+import { CloudinaryModule } from '../cloudinary/cloudinary.module.js';
 import {
   CHANGE_PASSWORD_PORT,
   CHECK_ACTION_TOKEN_PORT,
@@ -14,6 +15,7 @@ import {
   REQUEST_PASSWORD_RESET_PORT,
   RESEND_VERIFICATION_PORT,
   RESET_PASSWORD_PORT,
+  USER_PROFILE_PORT,
   VALIDATE_ACCESS_TOKEN_PORT,
   VERIFY_EMAIL_PORT,
 } from './application/ports/index.js';
@@ -29,6 +31,7 @@ import { JwtAuthGuard } from '../../shared/security/jwt-auth.guard.js';
   imports: [
     ConfigModule,
     DatabaseModule,
+    CloudinaryModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -104,6 +107,10 @@ import { JwtAuthGuard } from '../../shared/security/jwt-auth.guard.js';
     },
     {
       provide: VALIDATE_ACCESS_TOKEN_PORT,
+      useExisting: PostgresAuthenticationAdapter,
+    },
+    {
+      provide: USER_PROFILE_PORT,
       useExisting: PostgresAuthenticationAdapter,
     },
     AuthenticationService,

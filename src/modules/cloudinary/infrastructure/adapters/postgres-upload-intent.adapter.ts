@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import type { PoolClient } from 'pg';
 import { DatabaseService } from '../../../../shared/database/database.service.js';
 import type { Uuid } from '../../../../shared/types/domain.types.js';
 import type {
@@ -56,7 +55,6 @@ export class PostgresUploadIntentAdapter implements UploadIntentPort {
     secureUrl: string,
   ): Promise<boolean> {
     return this.database.transaction(async (client) => {
-      const profileId = await this.ensureUserProfile(client, userId);
       const { rows } = await client.query<{ id: Uuid }>(
         `SELECT id
          FROM app_cloudinary.upload_intents
@@ -82,32 +80,16 @@ export class PostgresUploadIntentAdapter implements UploadIntentPort {
         return false;
       }
 
-      await client.query(
-        `UPDATE app_profile.user_profiles
+      const updatedUser = await client.query(
+        `UPDATE app_auth.users
          SET avatar_url = $2
-         WHERE id = $1`,
-        [profileId, secureUrl],
+         WHERE id = $1 AND deleted_at IS NULL`,
+        [userId, secureUrl],
       );
+      if (updatedUser.rowCount !== 1) {
+        throw new Error('Avatar could not be saved for the authenticated user.');
+      }
       return true;
     });
-  }
-
-  private async ensureUserProfile(
-    client: PoolClient,
-    userId: Uuid,
-  ): Promise<Uuid> {
-    await client.query(
-      `INSERT INTO app_profile.user_profiles (user_id)
-       VALUES ($1) ON CONFLICT (user_id) DO NOTHING`,
-      [userId],
-    );
-    const { rows } = await client.query<{ id: Uuid }>(
-      'SELECT id FROM app_profile.user_profiles WHERE user_id = $1 FOR UPDATE',
-      [userId],
-    );
-    if (!rows[0]) {
-      throw new Error('Profile row could not be created.');
-    }
-    return rows[0].id;
   }
 }

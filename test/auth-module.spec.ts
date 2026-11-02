@@ -1,12 +1,12 @@
 import { ConfigModule } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import { describe, expect, it, vi } from 'vitest';
-import { ProfileModule } from '../src/modules/profile/profile.module.js';
-import { ProfileController } from '../src/modules/profile/presentation/profile.controller.js';
+import { AuthModule } from '../src/modules/auth/auth.module.js';
+import { AuthController } from '../src/modules/auth/presentation/auth.controller.js';
 import { DatabaseService } from '../src/shared/database/database.service.js';
 import { JwtAuthGuard } from '../src/shared/security/jwt-auth.guard.js';
 
-describe('ProfileModule dependency wiring', () => {
+describe('AuthModule dependency wiring', () => {
   it('resolves the shared JWT guard and its authentication dependencies', async () => {
     const module = await Test.createTestingModule({
       imports: [
@@ -16,10 +16,10 @@ describe('ProfileModule dependency wiring', () => {
           load: [
             () => ({
               GLOWNSCAN_JWT_ACCESS_SECRET:
-                'profile-module-test-secret-0123456789abcdef',
+                'auth-module-test-secret-0123456789abcdef',
               GLOWNSCAN_ACCESS_TOKEN_TTL_SECONDS: '900',
               GLOWNSCAN_REFRESH_TOKEN_TTL_DAYS: '30',
-              GLOWNSCAN_FIREBASE_PROJECT_ID: 'profile-module-test',
+              GLOWNSCAN_FIREBASE_PROJECT_ID: 'auth-module-test',
               GLOWNSCAN_CLOUDINARY_CLOUD_NAME: 'test-cloud',
               GLOWNSCAN_CLOUDINARY_API_KEY: 'test-key',
               GLOWNSCAN_CLOUDINARY_API_SECRET: 'test-secret',
@@ -31,7 +31,7 @@ describe('ProfileModule dependency wiring', () => {
             }),
           ],
         }),
-        ProfileModule,
+        AuthModule,
       ],
     })
       .overrideProvider(DatabaseService)
@@ -42,7 +42,7 @@ describe('ProfileModule dependency wiring', () => {
       .compile();
 
     try {
-      expect(module.get(ProfileController)).toBeInstanceOf(ProfileController);
+      expect(module.get(AuthController)).toBeInstanceOf(AuthController);
       expect(module.get(JwtAuthGuard, { strict: false })).toBeInstanceOf(
         JwtAuthGuard,
       );

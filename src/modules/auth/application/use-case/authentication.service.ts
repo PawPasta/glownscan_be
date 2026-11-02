@@ -8,6 +8,7 @@ import {
   UnauthorizedException,
 } from '../../../../shared/handler/http.exceptions.js';
 import type { SecurityContext } from '../../../../shared/security/security.context.js';
+import type { Uuid } from '../../../../shared/types/domain.types.js';
 import {
   ActionTokenPurpose,
   UserStatus,
@@ -47,6 +48,10 @@ import {
   type ResetPasswordPort,
   type ValidateAccessTokenPort,
   type VerifyEmailPort,
+  USER_PROFILE_PORT,
+  type UserProfilePort,
+  type UserProfileUpdate,
+  type ProfileSnapshot,
 } from '../ports/index.js';
 import { SmtpEmailService } from '../../infrastructure/adapters/smtp-email.service.js';
 import { TokenService, type TokenPayload } from './token.service.js';
@@ -87,9 +92,23 @@ export class AuthenticationService {
     private readonly changePasswordPort: ChangePasswordPort,
     @Inject(VALIDATE_ACCESS_TOKEN_PORT)
     private readonly validateAccessTokenPort: ValidateAccessTokenPort,
+    @Inject(USER_PROFILE_PORT)
+    private readonly userProfilePort: UserProfilePort,
     private readonly emailService: SmtpEmailService,
     private readonly tokenService: TokenService,
   ) {}
+
+  getProfile(userId: Uuid): Promise<ProfileSnapshot> {
+    return this.userProfilePort.getProfile(userId);
+  }
+
+  async updateProfile(
+    userId: Uuid,
+    changes: UserProfileUpdate,
+  ): Promise<ProfileSnapshot> {
+    await this.userProfilePort.updateUserProfile(userId, changes);
+    return this.getProfile(userId);
+  }
 
   async register(input: {
     email: string;
