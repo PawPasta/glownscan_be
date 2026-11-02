@@ -1,4 +1,4 @@
--- Migration V5: create_skin_analysis_schema
+-- Migration V4: create_skin_analysis_schema
 -- ============================================================
 
 CREATE SCHEMA IF NOT EXISTS app_skin_analysis;

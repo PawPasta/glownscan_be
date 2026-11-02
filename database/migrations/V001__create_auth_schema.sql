@@ -18,6 +18,10 @@ CREATE TABLE IF NOT EXISTS app_auth.users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email VARCHAR(320) NOT NULL,
     password_hash TEXT,
+    full_name VARCHAR(150),
+    avatar_url TEXT,
+    date_of_birth DATE,
+    gender VARCHAR(30),
     status VARCHAR(30) NOT NULL DEFAULT 'PENDING_VERIFICATION',
     email_verified_at TIMESTAMPTZ,
     token_version INTEGER NOT NULL DEFAULT 1 CHECK (token_version >= 1),
@@ -30,6 +34,10 @@ CREATE TABLE IF NOT EXISTS app_auth.users (
     CONSTRAINT ck_users_status CHECK (status IN
         ('PENDING_VERIFICATION', 'ACTIVE', 'LOCKED', 'SUSPENDED', 'DELETED')),
     CONSTRAINT ck_users_email CHECK (email = lower(btrim(email)) AND email <> ''),
+    CONSTRAINT ck_users_full_name CHECK (full_name IS NULL OR btrim(full_name) <> ''),
+    CONSTRAINT ck_users_gender CHECK (
+        gender IS NULL OR gender IN ('MALE', 'FEMALE', 'OTHER', 'PREFER_NOT_TO_SAY')
+    ),
     CONSTRAINT ck_users_deleted CHECK ((status = 'DELETED') = (deleted_at IS NOT NULL))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_users_active_email ON app_auth.users(email) WHERE deleted_at IS NULL;
