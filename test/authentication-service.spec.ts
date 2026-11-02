@@ -17,6 +17,7 @@ import {
   REQUEST_PASSWORD_RESET_PORT,
   RESEND_VERIFICATION_PORT,
   RESET_PASSWORD_PORT,
+  USER_PROFILE_PORT,
   VALIDATE_ACCESS_TOKEN_PORT,
   VERIFY_EMAIL_PORT,
 } from '../src/modules/auth/application/ports/index.js';
@@ -52,6 +53,8 @@ describe('AuthenticationService', () => {
     createRefreshSession: ReturnType<typeof vi.fn>;
     rotateRefreshToken: ReturnType<typeof vi.fn>;
     revokeRefreshToken: ReturnType<typeof vi.fn>;
+    getProfile: ReturnType<typeof vi.fn>;
+    updateUserProfile: ReturnType<typeof vi.fn>;
   };
   let emailService: {
     sendVerificationEmail: ReturnType<typeof vi.fn>;
@@ -82,6 +85,8 @@ describe('AuthenticationService', () => {
       createRefreshSession: vi.fn().mockResolvedValue(undefined),
       rotateRefreshToken: vi.fn(),
       revokeRefreshToken: vi.fn().mockResolvedValue(undefined),
+      getProfile: vi.fn().mockResolvedValue({ profile: { id: userId } }),
+      updateUserProfile: vi.fn().mockResolvedValue(undefined),
     };
     emailService = {
       sendVerificationEmail: vi.fn().mockResolvedValue(undefined),
@@ -115,6 +120,7 @@ describe('AuthenticationService', () => {
         { provide: RESET_PASSWORD_PORT, useValue: repository },
         { provide: CHANGE_PASSWORD_PORT, useValue: repository },
         { provide: VALIDATE_ACCESS_TOKEN_PORT, useValue: repository },
+        { provide: USER_PROFILE_PORT, useValue: repository },
         { provide: SmtpEmailService, useValue: emailService },
         { provide: JwtService, useValue: jwt },
         {
@@ -130,6 +136,21 @@ describe('AuthenticationService', () => {
 
   afterEach(async () => {
     await moduleRef.close();
+  });
+
+  it('loads and updates the authenticated user profile', async () => {
+    const snapshot = { profile: { id: userId } };
+    repository.getProfile.mockResolvedValue(snapshot);
+
+    await expect(service.getProfile(userId)).resolves.toBe(snapshot);
+    await expect(
+      service.updateProfile(userId, { fullName: 'Updated User' }),
+    ).resolves.toBe(snapshot);
+
+    expect(repository.updateUserProfile).toHaveBeenCalledWith(userId, {
+      fullName: 'Updated User',
+    });
+    expect(repository.getProfile).toHaveBeenCalledTimes(2);
   });
 
   it('rejects registration when password confirmation does not match', async () => {

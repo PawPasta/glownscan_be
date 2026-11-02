@@ -7,6 +7,7 @@ export type {
   FirebaseLoginPort,
   LoginPort,
   LogoutPort,
+  ProfileSnapshot,
   RefreshSessionData,
   RefreshSessionPort,
   RegisterAccountPort,
@@ -16,6 +17,8 @@ export type {
   ResetPasswordPort,
   ValidateAccessTokenPort,
   VerifyEmailPort,
+  UserProfilePort,
+  UserProfileUpdate,
 } from './authentication.use-case.ports.js';
 export {
   CHANGE_PASSWORD_PORT,
@@ -31,6 +34,7 @@ export {
   REQUEST_PASSWORD_RESET_PORT,
   RESEND_VERIFICATION_PORT,
   RESET_PASSWORD_PORT,
+  USER_PROFILE_PORT,
   VALIDATE_ACCESS_TOKEN_PORT,
   VERIFY_EMAIL_PORT,
 } from './authentication.use-case.ports.js';

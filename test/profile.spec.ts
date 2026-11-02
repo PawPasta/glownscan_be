@@ -5,6 +5,7 @@ import { DatabaseService } from '../src/shared/database/database.service.js';
 import type { UploadIntentPort } from '../src/modules/cloudinary/application/ports/upload-intent.port.js';
 import { CloudinaryUploadIntentService } from '../src/modules/cloudinary/application/use-case/cloudinary-upload-intent.service.js';
 import { PostgresUploadIntentAdapter } from '../src/modules/cloudinary/infrastructure/adapters/postgres-upload-intent.adapter.js';
+import { PostgresAuthenticationAdapter } from '../src/modules/auth/infrastructure/adapters/postgres-authentication.adapter.js';
 import {
   isExpectedCloudinaryUrl,
   signCloudinaryParams,
@@ -227,7 +228,6 @@ describe('CloudinaryUploadIntentService', () => {
 
 describe('PostgresUploadIntentAdapter', () => {
   const userId = 'c0a80101-0000-4000-8000-000000000001';
-  const profileId = 'b0a80101-0000-4000-8000-000000000001';
   const intentId = 'd0a80101-0000-4000-8000-000000000001';
 
   function createAdapter(query: ReturnType<typeof vi.fn>) {
@@ -284,8 +284,6 @@ describe('PostgresUploadIntentAdapter', () => {
     const { adapter, query } = createAdapter(
       vi
         .fn()
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [{ id: profileId }] })
         .mockResolvedValueOnce({ rows: [{ id: intentId }] })
         .mockResolvedValueOnce({ rows: [], rowCount: 1 })
         .mockResolvedValueOnce({ rows: [], rowCount: 1 }),
@@ -306,18 +304,14 @@ describe('PostgresUploadIntentAdapter', () => {
       [intentId],
     );
     expect(query).toHaveBeenCalledWith(
-      expect.stringContaining('UPDATE app_profile.user_profiles'),
-      [profileId, secureUrl],
+      expect.stringContaining('UPDATE app_auth.users'),
+      [userId, secureUrl],
     );
   });
 
   it('does not update the profile when no active intent matches the user', async () => {
     const { adapter, query } = createAdapter(
-      vi
-        .fn()
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [{ id: profileId }] })
-        .mockResolvedValueOnce({ rows: [] }),
+      vi.fn().mockResolvedValueOnce({ rows: [] }),
     );
     const publicId = `glownscan/avatars/${userId}/8a875514-1150-48d2-8d90-b2d55c9c8820`;
 
@@ -330,8 +324,50 @@ describe('PostgresUploadIntentAdapter', () => {
     ).resolves.toBe(false);
     expect(
       query.mock.calls.some(([sql]) =>
-        String(sql).includes('UPDATE app_profile.user_profiles'),
+        String(sql).includes('UPDATE app_auth.users'),
       ),
     ).toBe(false);
+  });
+});
+
+describe('PostgresAuthenticationAdapter profile methods', () => {
+  const userId = 'c0a80101-0000-4000-8000-000000000001';
+
+  it('returns only the user profile from app_auth.users', async () => {
+    const profile = {
+      id: userId,
+      userId,
+      fullName: 'Test User',
+      avatarUrl: null,
+      dateOfBirth: null,
+      gender: null,
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    };
+    const query = vi.fn().mockResolvedValue({ rows: [{ profile }] });
+    const adapter = new PostgresAuthenticationAdapter({
+      query,
+    } as unknown as DatabaseService);
+
+    await expect(adapter.getProfile(userId)).resolves.toEqual({ profile });
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('FROM app_auth.users'),
+      [userId],
+    );
+    expect(String(query.mock.calls[0]?.[0])).not.toContain('skinProfile');
+  });
+
+  it('updates user profile fields on app_auth.users', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [] });
+    const adapter = new PostgresAuthenticationAdapter({
+      query,
+    } as unknown as DatabaseService);
+
+    await adapter.updateUserProfile(userId, { fullName: 'Updated User' });
+
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE app_auth.users'),
+      [userId, 'Updated User'],
+    );
   });
 });

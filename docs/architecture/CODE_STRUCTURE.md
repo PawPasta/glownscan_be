@@ -150,11 +150,10 @@ feature; it contains wiring rather than business rules.
 | `src/main.ts`                                                        | Creates the Nest application and installs validation, CORS, Swagger, response, and exception handling. |
 | `src/app.module.ts`                                                  | Loads environment configuration and imports the root/shared/auth modules.                              |
 | `database/migrate.js`                                                | Applies ordered SQL migrations, verifies checksums, and records migration history.                     |
-| `database/migrations/V001__create_auth_schema.sql`                   | Creates auth tables, Firebase provider identities, nullable user passwords, and the `app_auth` schema. |
-| `database/migrations/V002__create_profile_schema.sql`                | Creates profile tables and the `app_profile` schema.                                                   |
-| `database/migrations/V003__seed_auth_reference_data.sql`             | Seeds auth roles, permissions, and mappings.                                                           |
-| `database/migrations/V004__create_app_cloudinary_upload_intents.sql` | Creates shared purpose-based Cloudinary upload-intent storage.                                         |
-| `database/migrations/V005__create_skin_analysis_schema.sql`          | Creates skin-analysis tables and schema; image upload intents live in `app_cloudinary`.                |
+| `database/migrations/V001__create_auth_schema.sql`                   | Creates auth tables, Firebase provider identities, nullable user passwords, and user profile fields in `app_auth`. |
+| `database/migrations/V002__seed_auth_reference_data.sql`             | Seeds auth roles, permissions, and mappings.                                                           |
+| `database/migrations/V003__create_app_cloudinary_upload_intents.sql` | Creates shared purpose-based Cloudinary upload-intent storage.                                         |
+| `database/migrations/V004__create_skin_analysis_schema.sql`          | Creates skin-analysis tables and schema; image upload intents live in `app_cloudinary`.                |
 | `database/bootstrap-admin.js`                                        | Explicitly creates an initial admin from environment configuration after migrations.                   |
 | `test/`                                                              | Vitest unit tests and end-to-end test setup.                                                           |
 

@@ -92,19 +92,20 @@ Project documentation is organized in the [`docs/`](docs/) folder:
 ## Profile API
 
 Send an access token in the Bearer authorization header for profile endpoints.
-`GET /profile` returns the personal and skin profiles. Use `PATCH /profile`
-to update personal details and `PATCH /profile/skin` to update skin details.
-Fields omitted from a patch are unchanged; nullable fields can be set to
-`null` to clear them.
+`GET /auth/profile` returns the authenticated user's personal profile. Use
+`PATCH /auth/profile` to update personal details; fields omitted from a patch are
+unchanged and nullable fields can be set to `null` to clear them. Skin profile
+estimates are returned by `POST /skin-analysis/analyze`, not by the profile
+endpoints.
 
-To set an avatar, call `POST /profile/avatar/upload-intent`, upload the image
+To set an avatar, call `POST /auth/profile/avatar/upload-intent`, upload the image
 directly to Cloudinary using the returned `cloudName`, `apiKey`, `timestamp`,
-`publicId`, and `signature`, then call `POST /profile/avatar/confirm` with
+`publicId`, and `signature`, then call `POST /auth/profile/avatar/confirm` with
 Cloudinary's `public_id`, `version`, `signature`, and `secure_url`. The upload
 intent metadata is stored in `app_cloudinary.upload_intents` with purpose
 `AVATAR`; it expires after 10 minutes and can only be consumed once. Creating a
 new intent revokes the previous pending avatar intent. On confirmation, the backend
-atomically consumes that intent and updates `app_profile.user_profiles.avatar_url`
+atomically consumes that intent and updates `app_auth.users.avatar_url`
 with Cloudinary's verified `secure_url`. The image URL is not stored in the
 upload-intent table. Configure
 `GLOWNSCAN_CLOUDINARY_CLOUD_NAME`, `GLOWNSCAN_CLOUDINARY_API_KEY`, and
@@ -142,10 +143,13 @@ Gemini, validates the returned JSON, and returns the analysis. It does not
 analyze images based on an unverified URL. This first version does not persist
 the analysis result.
 
-The response contains a 0–100 overall visible-skin score, 0–100 scores for
-seven visible concern metrics, confidence and visibility for each metric,
-regional scores, observations, and `highlights` with normalized image
-coordinates (`x`, `y`, and `radius`, each in the 0–1000 coordinate space).
+The response contains a 0–100 overall visible-skin score, an estimated
+`skinProfile` (visual skin type, nullable sensitivity level, and brief notes),
+0–100 scores for seven visible concern metrics, confidence and visibility for
+each metric, regional scores, observations, and `highlights` with normalized
+image coordinates (`x`, `y`, and `radius`, each in the 0–1000 coordinate space).
+Sensitivity cannot be established from one image, so `sensitivityLevel` is
+returned as `null`.
 Highlights can be used by the mobile app to draw emphasis markers on the
 original image. Scores are visual estimates, not medical diagnoses or
 instrument measurements. The client should obtain the user's consent before
@@ -221,7 +225,7 @@ Key application and shared files:
 
 ## Database design
 
-The migrations create schemas for authentication and authorization (`app_auth`), user and skin profiles (`app_profile`), shared purpose-based image upload intents (`app_cloudinary`), and skin analysis (`app_skin_analysis`), plus initial auth reference data. Avatar and skin-analysis uploads use the same upload-intent table and service; the skin-analysis schema does not own upload-intent storage.
+The migrations create schemas for authentication and user profiles (`app_auth`), shared purpose-based image upload intents (`app_cloudinary`), and skin analysis (`app_skin_analysis`), plus initial auth reference data. Skin-analysis results include the generated skin profile. Avatar and skin-analysis uploads use the same upload-intent table and service; the skin-analysis schema does not own upload-intent storage.
 
 The migration runner connects to PostgreSQL using `GLOWNSCAN_DATABASE_URL` (`DATABASE_URL` is a fallback). It records applied versions and SHA-256 checksums in `public.schema_migrations`, applies each migration in its own transaction, and uses a PostgreSQL advisory lock to prevent concurrent runs. Migrations are run explicitly from the CLI; the NestJS application does not apply them at startup.
 
@@ -290,13 +294,12 @@ The initial migration sequence is:
 
 | Version | Description                                                                              |
 | ------- | ---------------------------------------------------------------------------------------- |
-| V001    | Authentication, authorization, Firebase provider identities, and nullable user passwords |
-| V002    | User and skin profile schema                                                             |
-| V003    | Seed auth roles, permissions, and role-permission mappings                               |
-| V004    | Cloudinary upload intents                                                                |
-| V005    | Skin analysis schema                                                                     |
+| V001    | Authentication, authorization, Firebase provider identities, user profile fields, and nullable user passwords |
+| V002    | Seed auth roles, permissions, and role-permission mappings                               |
+| V003    | Cloudinary upload intents                                                                |
+| V004    | Skin analysis schema                                                                     |
 
-Add a new `V<number>__description.sql` file for future changes; do not edit a migration after it has been applied. The runner detects missing or modified applied migrations and stops with an error. The current V001–V005 set has been rebuilt and requires a clean schema. `npm run db:migrate:reset` drops the application schemas (`app_auth`, `app_profile`, `app_cloudinary`, `app_skin_analysis`) and `public.schema_migrations`, then reapplies all migrations. It does not drop unrelated schemas, but is destructive and has no confirmation guard; verify `GLOWNSCAN_DATABASE_URL` and use only for demo/development data. Never run it against production or a database whose data must be retained. If the old combined SQL script was already run, do not apply these migrations blindly; back up and baseline that database deliberately.
+Add a new `V<number>__description.sql` file for future changes; do not edit a migration after it has been applied. The runner detects missing or modified applied migrations and stops with an error. The current V001–V004 set requires a clean schema. `npm run db:migrate:reset` drops the application schemas (`app_auth`, `app_cloudinary`, `app_skin_analysis`), the legacy `app_profile` schema, and `public.schema_migrations`, then reapplies all migrations. It does not drop unrelated schemas, but is destructive and has no confirmation guard; verify `GLOWNSCAN_DATABASE_URL` and use only for demo/development data. Never run it against production or a database whose data must be retained. If the old combined SQL script was already run, do not apply these migrations blindly; back up and baseline that database deliberately.
 
 The migration role should be separate from the application's runtime credentials. The schemas enable row-level security and revoke access from `PUBLIC`; configure the required database grants and RLS policies for the runtime role as part of application integration.
 

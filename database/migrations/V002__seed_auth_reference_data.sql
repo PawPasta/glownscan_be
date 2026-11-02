@@ -1,4 +1,4 @@
--- Migration V3: seed_auth_reference_data
+-- Migration V2: seed_auth_reference_data
 -- ============================================================
 
 INSERT INTO app_auth.roles (code, name, description)

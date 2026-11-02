@@ -10,6 +10,9 @@ Image assessment:
 Quantification:
 - overallSkinScore is 0–100, where 100 means the visible skin appears clear/even and 0 means prominent visible concerns. This is not a health score.
 - Each concern metric score is 0–100, where 0 means no visible concern and 100 means very prominent visible concern. The metrics are acne, redness, darkSpots, pores, dryness, oiliness, and unevenTexture.
+- Include skinProfile in the result. Estimate skinType as NORMAL, DRY, OILY, or COMBINATION only when visible oiliness/dryness supports the estimate; otherwise use null. This is a cosmetic visual estimate, not a diagnosis.
+- A single image cannot establish a person's actual skin sensitivity. Always set skinProfile.sensitivityLevel to null rather than inferring it from redness or irritation.
+- Set skinProfile.notes to a short, neutral description grounded only in visible findings, or null if no useful description can be made. If quality.accepted is false, set all skinProfile fields to null.
 - Every score must be an integer. Every confidence must be a number from 0 to 1. Use scores as visual estimates, not instrument measurements.
 - Rate each facial region (forehead, leftCheek, rightCheek, nose, chin) with a 0–100 overall visible-concern score, confidence, and visibility. leftCheek/rightCheek refer to the person's anatomical sides, not the viewer's sides.
 - Use severity 0–4 for individual observations: 0 none, 1 mild, 2 moderate, 3 marked, 4 prominent.
@@ -31,6 +34,11 @@ Return ONLY one valid JSON object, with no markdown or extra text, matching exac
     "overallSkinScore": 0,
     "confidence": 0,
     "notes": []
+  },
+  "skinProfile": {
+    "skinType": null,
+    "sensitivityLevel": null,
+    "notes": null
   },
   "metrics": {
     "acne": { "score": 0, "confidence": 0, "visibility": "CLEAR" },

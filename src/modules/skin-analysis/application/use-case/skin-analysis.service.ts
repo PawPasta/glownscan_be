@@ -155,6 +155,7 @@ function isSkinAnalysisResult(value: unknown): value is SkinAnalysisResult {
     !isIntegerInRange(value.summary.overallSkinScore, 0, 100) ||
     !isUnitInterval(value.summary.confidence) ||
     !isStringArray(value.summary.notes) ||
+    !isSkinProfile(value.skinProfile) ||
     !isRecord(metrics) ||
     !isRecord(regions) ||
     !Array.isArray(value.observations) ||
@@ -185,6 +186,23 @@ function isSkinAnalysisResult(value: unknown): value is SkinAnalysisResult {
     regionNames.every((name) => isAssessment(regions[name])) &&
     value.observations.every(isObservation) &&
     value.highlights.every(isHighlight)
+  );
+}
+
+function isSkinProfile(value: unknown): boolean {
+  const skinTypes = ['NORMAL', 'DRY', 'OILY', 'COMBINATION'];
+  const sensitivityLevels = ['LOW', 'MEDIUM', 'HIGH'];
+  return (
+    isRecord(value) &&
+    (value.skinType === null ||
+      (typeof value.skinType === 'string' &&
+        skinTypes.some((skinType) => skinType === value.skinType))) &&
+    (value.sensitivityLevel === null ||
+      (typeof value.sensitivityLevel === 'string' &&
+        sensitivityLevels.some(
+          (level) => level === value.sensitivityLevel,
+        ))) &&
+    (value.notes === null || typeof value.notes === 'string')
   );
 }
 

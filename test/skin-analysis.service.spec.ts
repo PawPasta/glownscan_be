@@ -41,6 +41,11 @@ function analysisResult() {
     schemaVersion: '1.0',
     quality: { accepted: true, issues: [] },
     summary: { overallSkinScore: 90, confidence: 0.9, notes: [] },
+    skinProfile: {
+      skinType: 'NORMAL',
+      sensitivityLevel: null,
+      notes: 'Even-looking skin with no prominent visible dryness or oiliness.',
+    },
     metrics: {
       acne: assessment,
       redness: assessment,
@@ -117,6 +122,7 @@ describe('SkinAnalysisService', () => {
     ).resolves.toMatchObject({
       schemaVersion: '1.0',
       summary: { overallSkinScore: 90 },
+      skinProfile: { skinType: 'NORMAL', sensitivityLevel: null },
       highlights: [],
     });
 
@@ -129,7 +135,7 @@ describe('SkinAnalysisService', () => {
       confirmation,
     );
     expect(generateContent).toHaveBeenCalledWith({
-      prompt: expect.stringContaining('Face overlay coordinates:'),
+      prompt: expect.stringContaining('"skinProfile"'),
       image: {
         mimeType: 'image/jpeg',
         data: new Uint8Array(Buffer.from('image-data')),

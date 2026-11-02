@@ -1,4 +1,12 @@
-import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Patch,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth } from '@nestjs/swagger';
 import type { Request } from 'express';
 import {
@@ -9,6 +17,7 @@ import { AuthenticationService } from '../application/use-case/authentication.se
 import {
   ChangePasswordDto,
   CheckActionTokenDto,
+  ConfirmAvatarUploadDto,
   FirebaseLoginDto,
   FirebaseMobileLoginDto,
   LoginDto,
@@ -19,13 +28,53 @@ import {
   RegisterDto,
   ResetPasswordDto,
   ResetPasswordRequestDto,
+  UpdateUserProfileDto,
   VerifyEmailDto,
 } from './auth.dto.js';
 import { JwtAuthGuard } from '../../../shared/security/jwt-auth.guard.js';
+import { CloudinaryUploadIntentService } from '../../cloudinary/application/use-case/cloudinary-upload-intent.service.js';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authentication: AuthenticationService) {}
+  constructor(
+    private readonly authentication: AuthenticationService,
+    private readonly cloudinary: CloudinaryUploadIntentService,
+  ) {}
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('access-token')
+  @Get('profile')
+  getProfile(@CurrentUser() user: SecurityContext) {
+    return this.authentication.getProfile(user.userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('access-token')
+  @Patch('profile')
+  updateProfile(
+    @CurrentUser() user: SecurityContext,
+    @Body() body: UpdateUserProfileDto,
+  ) {
+    return this.authentication.updateProfile(user.userId, body);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('access-token')
+  @Post('profile/avatar/upload-intent')
+  createAvatarUploadIntent(@CurrentUser() user: SecurityContext) {
+    return this.cloudinary.createAvatarUploadIntent(user.userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('access-token')
+  @Post('profile/avatar/confirm')
+  async confirmAvatarUpload(
+    @CurrentUser() user: SecurityContext,
+    @Body() body: ConfirmAvatarUploadDto,
+  ) {
+    await this.cloudinary.confirmAvatarUpload(user.userId, body);
+    return this.authentication.getProfile(user.userId);
+  }
 
   @Post('register')
   register(@Body() body: RegisterDto) {

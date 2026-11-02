@@ -5,23 +5,33 @@ import { DatabaseService } from '../../../../shared/database/database.service.js
 import { ActionTokenPurpose } from '../../domain/entities/enums/auth.enums.js';
 import { FirebaseAccountConflictError } from '../../application/ports/index.js';
 import type {
+  AuthUserRecord,
   ChangePasswordPort,
   CheckActionTokenPort,
-  AuthUserRecord,
   FirebaseIdentityClaims,
   FirebaseLoginPort,
   LoginPort,
   LogoutPort,
+  RefreshSessionData,
   RefreshSessionPort,
   RegisterAccountPort,
   RegisterUserData,
   RequestPasswordResetPort,
-  RefreshSessionData,
+  ProfileSnapshot,
   ResendVerificationPort,
   ResetPasswordPort,
   ValidateAccessTokenPort,
   VerifyEmailPort,
+  UserProfilePort,
+  UserProfileUpdate,
 } from '../../application/ports/index.js';
+import type { Uuid } from '../../../../shared/types/domain.types.js';
+
+const USER_PROFILE_COLUMNS = {
+  fullName: 'full_name',
+  dateOfBirth: 'date_of_birth',
+  gender: 'gender',
+} as const;
 
 @Injectable()
 export class PostgresAuthenticationAdapter
@@ -37,9 +47,58 @@ export class PostgresAuthenticationAdapter
     RequestPasswordResetPort,
     ResetPasswordPort,
     ChangePasswordPort,
-    ValidateAccessTokenPort
+    ValidateAccessTokenPort,
+    UserProfilePort
 {
   constructor(private readonly database: DatabaseService) {}
+
+  async getProfile(userId: Uuid): Promise<ProfileSnapshot> {
+    const { rows } = await this.database.query<ProfileSnapshot>(
+      `SELECT
+         json_build_object(
+           'id', u.id,
+           'userId', u.id,
+           'fullName', u.full_name,
+           'avatarUrl', u.avatar_url,
+           'dateOfBirth', u.date_of_birth,
+           'gender', u.gender,
+           'createdAt', u.created_at,
+           'updatedAt', u.updated_at
+         ) AS profile
+       FROM app_auth.users u
+       WHERE u.id = $1 AND u.deleted_at IS NULL`,
+      [userId],
+    );
+    if (!rows[0]) {
+      throw new Error('Profile could not be loaded for the authenticated user.');
+    }
+    return rows[0];
+  }
+
+  async updateUserProfile(
+    userId: Uuid,
+    changes: UserProfileUpdate,
+  ): Promise<void> {
+    const entries = Object.entries(USER_PROFILE_COLUMNS).filter(([key]) =>
+      Object.hasOwn(changes, key),
+    );
+    if (entries.length === 0) {
+      return;
+    }
+
+    const values = entries.map(
+      ([key]) => changes[key as keyof UserProfileUpdate],
+    );
+    const assignments = entries.map(
+      ([, column], index) => `${column} = $${index + 2}`,
+    );
+    await this.database.query(
+      `UPDATE app_auth.users
+       SET ${assignments.join(', ')}
+       WHERE id = $1 AND deleted_at IS NULL`,
+      [userId, ...values],
+    );
+  }
 
   async registerUser(data: RegisterUserData): Promise<void> {
     await this.database.transaction(async (client) => {
@@ -212,11 +271,10 @@ export class PostgresAuthenticationAdapter
       }
 
       await client.query(
-        `INSERT INTO app_profile.user_profiles (user_id, full_name, avatar_url)
-         VALUES ($1, LEFT(NULLIF(BTRIM($2), ''), 150), $3)
-         ON CONFLICT (user_id) DO UPDATE SET
-           full_name = COALESCE(app_profile.user_profiles.full_name, EXCLUDED.full_name),
-           avatar_url = COALESCE(app_profile.user_profiles.avatar_url, EXCLUDED.avatar_url)`,
+        `UPDATE app_auth.users
+         SET full_name = COALESCE(full_name, LEFT(NULLIF(BTRIM($2), ''), 150)),
+             avatar_url = COALESCE(avatar_url, $3)
+         WHERE id = $1`,
         [userId, identity.name, identity.picture],
       );
 

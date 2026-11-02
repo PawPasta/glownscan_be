@@ -1,5 +1,24 @@
 import type { ActionTokenPurpose } from '../../domain/entities/enums/auth.enums.js';
 import type { Uuid } from '../../../../shared/types/domain.types.js';
+import type {
+  Gender,
+  UserProfile,
+} from '../../domain/entities/user-profile.entity.js';
+
+export interface UserProfileUpdate {
+  fullName?: string | null;
+  dateOfBirth?: string | null;
+  gender?: Gender | null;
+}
+
+export interface ProfileSnapshot {
+  profile: UserProfile;
+}
+
+export interface UserProfilePort {
+  getProfile(userId: Uuid): Promise<ProfileSnapshot>;
+  updateUserProfile(userId: Uuid, changes: UserProfileUpdate): Promise<void>;
+}
 
 export interface AuthUserRecord {
   id: Uuid;
@@ -160,3 +179,4 @@ export const CHANGE_PASSWORD_PORT = Symbol('CHANGE_PASSWORD_PORT');
 export const VALIDATE_ACCESS_TOKEN_PORT = Symbol(
   'VALIDATE_ACCESS_TOKEN_PORT',
 );
+export const USER_PROFILE_PORT = Symbol('USER_PROFILE_PORT');
