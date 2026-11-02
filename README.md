@@ -113,7 +113,9 @@ upload-intent table. Configure
 ## Skin analysis API
 
 Configure `GLOWNSCAN_GEMINI_API_KEY`, optional `GLOWNSCAN_GEMINI_MODEL`
-(defaults to `gemini-2.5-flash`), and `GLOWNSCAN_CLOUDINARY_CLOUD_NAME`.
+(defaults to `gemini-2.5-flash`), optional `GLOWNSCAN_GEMINI_BASE_URL`
+(defaults to `https://generativelanguage.googleapis.com/v1beta/models`), and
+`GLOWNSCAN_CLOUDINARY_CLOUD_NAME`.
 Before uploading a JPEG, PNG, or WebP image to Cloudinary, call
 `POST /skin-analysis/upload-intent` with the access token. The response
 contains the Cloudinary `cloudName`, `apiKey`, `timestamp`, `publicId`, and

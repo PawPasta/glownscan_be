@@ -78,6 +78,37 @@ describe('GeminiGenerativeModelAdapter', () => {
     ).rejects.toThrow('GLOWNSCAN_GEMINI_API_KEY is required for Gemini calls.');
   });
 
+  it('uses the configured API base URL', async () => {
+    const fetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            candidates: [
+              { content: { parts: [{ text: '{"ok":true}' }] } },
+            ],
+          }),
+          { status: 200 },
+        ),
+      );
+    const adapter = new GeminiGenerativeModelAdapter(
+      new ConfigService({
+        GLOWNSCAN_GEMINI_API_KEY: 'test-key',
+        GLOWNSCAN_GEMINI_BASE_URL: 'https://gemini-proxy.example/v1/models/',
+        GLOWNSCAN_GEMINI_MODEL: 'gemini-test',
+      }),
+    );
+
+    await adapter.generateContent({
+      prompt: 'Analyze this image.',
+      image: { mimeType: 'image/jpeg', data: Buffer.from('image-data') },
+    });
+
+    expect(fetch.mock.calls[0]?.[0]).toBe(
+      'https://gemini-proxy.example/v1/models/gemini-test:generateContent',
+    );
+  });
+
   it('fails explicitly when Gemini returns an unsuccessful status', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(null, { status: 429 }),

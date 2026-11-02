@@ -6,7 +6,7 @@ import type {
   GeminiGenerativeModelPort,
 } from '../../application/ports/gemini-generative-model.port.js';
 
-const GEMINI_API_BASE_URL =
+const DEFAULT_GEMINI_API_BASE_URL =
   'https://generativelanguage.googleapis.com/v1beta/models';
 const GEMINI_REQUEST_TIMEOUT_MS = 60_000;
 
@@ -26,8 +26,13 @@ export class GeminiGenerativeModelAdapter implements GeminiGenerativeModelPort {
       'GLOWNSCAN_GEMINI_MODEL',
       'gemini-2.5-flash',
     );
+    const baseUrl =
+      this.config
+        .get<string>('GLOWNSCAN_GEMINI_BASE_URL')
+        ?.trim()
+        .replace(/\/+$/, '') || DEFAULT_GEMINI_API_BASE_URL;
     const response = await fetch(
-      `${GEMINI_API_BASE_URL}/${encodeURIComponent(model)}:generateContent`,
+      `${baseUrl}/${encodeURIComponent(model)}:generateContent`,
       {
         method: 'POST',
         headers: {
