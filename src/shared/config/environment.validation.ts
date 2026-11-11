@@ -11,6 +11,10 @@ export function validateEnvironment(env: Record<string, unknown>) {
     'GLOWNSCAN_CLOUDINARY_API_KEY',
     'GLOWNSCAN_CLOUDINARY_API_SECRET',
     'GLOWNSCAN_GEMINI_API_KEY',
+    'GLOWNSCAN_SEPAY_WEBHOOK_SECRET',
+    'GLOWNSCAN_SEPAY_BANK_ACCOUNT_NUMBER',
+    'GLOWNSCAN_BANK_ACCOUNT_NAME',
+    'GLOWNSCAN_BANK_BIN',
   ];
   for (const key of required)
     if (typeof env[key] !== 'string' || !env[key].trim())
@@ -27,6 +31,7 @@ export function validateEnvironment(env: Record<string, unknown>) {
     'GLOWNSCAN_ANALYSIS_DAILY_QUOTA_PREMIUM',
     'GLOWNSCAN_ANALYSIS_IMAGE_MAX_BYTES',
     'GLOWNSCAN_ANALYSIS_IMAGE_DOWNLOAD_TIMEOUT_MS',
+    'GLOWNSCAN_PAYMENT_ORDER_TTL_MINUTES',
   ]) {
     if (
       env[key] !== undefined &&

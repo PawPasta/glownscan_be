@@ -1,6 +1,6 @@
 import type { INestApplication } from '@nestjs/common';
 
-//URL default để chạy local, nếu muốn chạy trên server thì cần set biến môi trường GLOWNSCAN_FRONTEND_URL
+// Default local origin. Set GLOWNSCAN_FRONTEND_URL for deployed environments.
 const defaultFrontendOrigin = 'http://localhost:5173';
 
 export function getCorsOptions(

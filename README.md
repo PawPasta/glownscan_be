@@ -359,10 +359,20 @@ The initial migration sequence is:
 | V002    | Seed auth roles, permissions, and role-permission mappings                               |
 | V003    | Cloudinary upload intents                                                                |
 | V004    | Skin analysis schema                                                                     |
+| V005    | Rate-limit and analysis quota schema                                                     |
+| V006    | Internal wallets, SePay payment orders/events, ledger, and PREMIUM subscriptions         |
 
-Add a new `V<number>__description.sql` file for future changes; do not edit a migration after it has been applied. The runner detects missing or modified applied migrations and stops with an error. The current V001–V004 set requires a clean schema. `npm run db:migrate:reset` drops the application schemas (`app_auth`, `app_cloudinary`, `app_skin_analysis`), the legacy `app_profile` schema, and `public.schema_migrations`, then reapplies all migrations. It does not drop unrelated schemas, but is destructive and has no confirmation guard; verify `GLOWNSCAN_DATABASE_URL` and use only for demo/development data. Never run it against production or a database whose data must be retained. If the old combined SQL script was already run, do not apply these migrations blindly; back up and baseline that database deliberately.
+Add a new `V<number>__description.sql` file for future changes; do not edit a migration after it has been applied. The runner detects missing or modified applied migrations and stops with an error. The current V001–V006 set requires a clean schema. `npm run db:migrate:reset` drops the application schemas (`app_auth`, `app_cloudinary`, `app_skin_analysis`, `app_billing`), the legacy `app_profile` schema, and `public.schema_migrations`, then reapplies all migrations. It does not drop unrelated schemas, but is destructive and has no confirmation guard; verify `GLOWNSCAN_DATABASE_URL` and use only for demo/development data. Never run it against production or a database whose data must be retained. If the old combined SQL script was already run, do not apply these migrations blindly; back up and baseline that database deliberately.
 
 The migration role should be separate from the application's runtime credentials. The schemas enable row-level security and revoke access from `PUBLIC`; configure the required database grants and RLS policies for the runtime role as part of application integration.
+
+### SePay, wallet, and PREMIUM payments
+
+`PREMIUM` is the only paid entitlement; “VIP” is merely a UI label, not a second plan. Packages are `PREMIUM_MONTHLY` (45,000 VND / 30 days), `PREMIUM_QUARTERLY` (120,000 VND / 90 days), and `PREMIUM_YEARLY` (500,000 VND / 365 days).
+
+Set the SePay secret and bank-account settings in `.env.local`. The existing deployment spelling `GLOWNSCAN_ADMIN_EMAI` is supported, with `GLOWNSCAN_ADMIN_EMAIL` as fallback. Authenticated clients create QR-backed top-ups at `POST /payment/top-ups`, or fixed-price package checkouts at `POST /payment/premium-checkouts`; both return a VietQR image URL and a payment code. Clients poll `GET /payment/orders/:orderId`, read their wallet and ledger under `/payment/wallet`, and may cancel their own pending order with a reason. An ADMIN can issue an internal-wallet refund with a reason at `POST /payment/admin/orders/:orderId/refund`.
+
+SePay calls `POST /payment/webhook`. The endpoint verifies the five-minute `X-SePay-Timestamp` and HMAC-SHA256 `X-SePay-Signature` over the raw body, and deduplicates the SePay transaction ID. One database transaction credits the customer wallet and administrator collection ledger; for a PREMIUM checkout it immediately pays from that wallet, credits the administrator sale ledger, creates or extends the subscription, and applies the existing `PREMIUM` entitlement. Refunds debit the administrator wallet and credit the customer wallet only—no external bank transfer is initiated.
 
 ### Auth configuration and admin bootstrap
 

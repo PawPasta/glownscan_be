@@ -9,7 +9,7 @@ import { requestContext } from './shared/observability/request-context.js';
 import { HttpLoggingInterceptor } from './shared/observability/http-logging.interceptor.js';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { rawBody: true });
 
   // Config Middlewares, Interceptors, Filters, Pipes, etc.
   setupCors(app);

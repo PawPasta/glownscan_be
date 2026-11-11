@@ -169,6 +169,7 @@ export async function resetApplicationSchemas(client) {
   await client.query('BEGIN');
   try {
     await client.query('DROP SCHEMA IF EXISTS app_skin_analysis CASCADE');
+    await client.query('DROP SCHEMA IF EXISTS app_billing CASCADE');
     await client.query('DROP SCHEMA IF EXISTS app_security CASCADE');
     await client.query('DROP SCHEMA IF EXISTS app_cloudinary CASCADE');
     await client.query('DROP SCHEMA IF EXISTS app_profile CASCADE');
