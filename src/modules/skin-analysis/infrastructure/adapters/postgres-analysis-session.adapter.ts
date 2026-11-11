@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { DatabaseService } from '../../../../shared/database/database.service.js';
 import type { Uuid } from '../../../../shared/types/domain.types.js';
 import type {
@@ -9,7 +10,10 @@ import type { SkinAnalysisResult } from '../../application/types/skin-analysis-r
 
 @Injectable()
 export class PostgresAnalysisSessionAdapter implements AnalysisSessionPort {
-  constructor(private readonly database: DatabaseService) {}
+  constructor(
+    private readonly database: DatabaseService,
+    private readonly config: ConfigService,
+  ) {}
   async claimSession(
     userId: Uuid,
     key: string,
@@ -46,12 +50,39 @@ export class PostgresAnalysisSessionAdapter implements AnalysisSessionPort {
     });
   }
   async markRunning(sessionId: Uuid, userId: Uuid): Promise<boolean> {
+    const reclaimAfterSeconds = positiveInt(
+      this.config,
+      'GLOWNSCAN_ANALYSIS_WORKER_RECLAIM_AFTER_SECONDS',
+      25,
+    );
     const result = await this.database.query(
       `UPDATE app_skin_analysis.analysis_sessions SET status = 'RUNNING', started_at = CURRENT_TIMESTAMP, attempt_count = attempt_count + 1
-       WHERE id = $1 AND user_id = $2 AND status = 'UPLOAD_PENDING'`,
-      [sessionId, userId],
+       WHERE id = $1 AND user_id = $2
+         AND (status = 'QUEUED' OR (status = 'RUNNING' AND started_at < CURRENT_TIMESTAMP - ($3 * INTERVAL '1 second')))`,
+      [sessionId, userId, reclaimAfterSeconds],
     );
     return result.rowCount === 1;
+  }
+  async queueSession(
+    sessionId: Uuid,
+    userId: Uuid,
+    payload: { secureUrl: string; reservationId: Uuid },
+  ): Promise<boolean> {
+    return this.database.transaction(async (client) => {
+      const queued = await client.query(
+        `UPDATE app_skin_analysis.analysis_sessions
+         SET status = 'QUEUED', next_attempt_at = CURRENT_TIMESTAMP
+         WHERE id = $1 AND user_id = $2 AND status = 'UPLOAD_PENDING'`,
+        [sessionId, userId],
+      );
+      if (queued.rowCount !== 1) return false;
+      await client.query(
+        `INSERT INTO app_skin_analysis.analysis_outbox (session_id, event_type, payload)
+         VALUES ($1, 'PROCESS_ANALYSIS', $2::jsonb)`,
+        [sessionId, JSON.stringify({ userId, ...payload })],
+      );
+      return true;
+    });
   }
   async completeSession(
     sessionId: Uuid,
@@ -145,4 +176,15 @@ export class PostgresAnalysisSessionAdapter implements AnalysisSessionPort {
     return `SELECT s.id, s.status, s.created_at AS "createdAt", s.completed_at AS "completedAt", s.error_code AS "errorCode", r.provider_payload AS result
       FROM app_skin_analysis.analysis_sessions s LEFT JOIN app_skin_analysis.analysis_results r ON r.session_id = s.id`;
   }
+}
+
+function positiveInt(
+  config: ConfigService,
+  name: string,
+  fallback: number,
+): number {
+  const value = Number(config.get<string>(name, String(fallback)));
+  if (!Number.isInteger(value) || value < 1)
+    throw new Error(`${name} must be a positive integer.`);
+  return value;
 }

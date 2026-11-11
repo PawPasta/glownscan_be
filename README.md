@@ -2,7 +2,7 @@
 
 GlowScan is a personalized skincare application. This repository contains the backend API intended to support the mobile app and admin dashboard.
 
-> **Implementation status:** The backend includes authentication, profiles, a persisted skin assessment, synchronous skin analysis, PostgreSQL integration, wallet-backed `PREMIUM` payments via SePay, and an administrator-managed product catalog. Payment confirmation can notify registered mobile devices and email recipients. Routines, recommendations, progress tracking, and background analysis workers remain planned.
+> **Implementation status:** The backend includes authentication, profiles, persisted skin assessments and analysis history, Redis/BullMQ background skin analysis, PostgreSQL integration, wallet-backed `PREMIUM` payments via SePay, product catalog administration, and personalized catalog recommendations. Payment confirmation can notify registered mobile devices and email recipients. Routines and progress tracking remain planned.
 
 ## Product flows
 
@@ -123,18 +123,22 @@ database migrations.
 
 ```text
 client -> upload intent -> Cloudinary direct upload -> confirm/analyze API
-       -> ownership + quota + idempotency -> verified image download
-       -> Gemini -> result validator -> transactional result persistence
-       -> status/history API
+       -> ownership + quota + idempotency -> session + transactional outbox
+       -> Redis/BullMQ worker -> verified image download -> Gemini
+       -> result validator -> transactional result persistence -> status/history API
 ```
 
 Use `Idempotency-Key` on analysis creation. Do not send access tokens,
 Cloudinary URLs, image bytes, or provider responses to logs.
 
-The current analysis path is synchronous: the HTTP request waits for Gemini and
-returns the completed result. BullMQ and Redis dependencies are installed for a
-future outbox/worker implementation, but no background analysis worker is
-wired into the request path yet.
+`POST /skin-analysis/analyze` is asynchronous. It returns `202 Accepted` with
+`{ "sessionId": "…", "status": "QUEUED" }`; clients poll the owned session
+endpoint until it becomes `SUCCEEDED` or `FAILED`. The session and its outbox
+event are written in one PostgreSQL transaction. A dispatcher safely republishes
+unpublished events after a Redis outage, and the worker claims `QUEUED` sessions
+atomically so duplicate BullMQ delivery does not call Gemini twice.
+Run the HTTP API with `npm run start:prod` and the separate worker process with
+`npm run start:analysis-worker`; both require PostgreSQL and Redis.
 
 ## Local setup and performance tests
 
@@ -202,11 +206,12 @@ with the access token and Cloudinary's `public_id`, `version`, `signature`, and
 ```
 
 The backend verifies the Cloudinary response signature and exact URL, consumes
-the matching unexpired upload intent once, downloads the image, sends it to
+the matching unexpired upload intent once, queues durable worker work, and
+returns `202 Accepted`. The worker downloads the verified image, sends it to
 Gemini, validates the returned JSON, and transactionally stores the session,
 result, and observations. It does not analyze images based on an unverified
 URL. Retrieve an owned result with `GET /skin-analysis/:analysisId` and paged
-history with `GET /skin-analysis/history`.
+history with `GET /skin-analysis`.
 
 The response contains a 0–100 overall visible-skin score, an estimated
 `skinProfile` (visual skin type, nullable sensitivity level, and brief notes),
@@ -238,6 +243,11 @@ GLOWNSCAN_ANALYSIS_DAILY_QUOTA_PREMIUM=30
 GLOWNSCAN_ANALYSIS_MAX_CONCURRENT_PER_USER=1
 GLOWNSCAN_ANALYSIS_MAX_CONCURRENT_GLOBAL=10
 GLOWNSCAN_ANALYSIS_RESERVATION_TTL_SECONDS=180
+GLOWNSCAN_REDIS_URL=redis://localhost:6379
+GLOWNSCAN_ANALYSIS_WORKER_CONCURRENCY=3
+GLOWNSCAN_ANALYSIS_WORKER_ATTEMPTS=3
+GLOWNSCAN_ANALYSIS_OUTBOX_POLL_MS=1000
+GLOWNSCAN_ANALYSIS_WORKER_RECLAIM_AFTER_SECONDS=25
 ```
 
 New accounts use the free quota. A confirmed `PREMIUM` package purchase creates
@@ -382,8 +392,8 @@ The auth `Password` value object requires at least six characters, including an 
 | `GET`  | `/skin-assessments/current`    | Return the caller's current questionnaire or `null`                    |
 | `PUT`  | `/skin-assessments/current`    | Validate and save the caller's questionnaire                           |
 | `POST` | `/skin-analysis/upload-intent` | Create a one-time owned Cloudinary upload intent                       |
-| `POST` | `/skin-analysis/analyze`       | Verify, analyze, and persist a skin-analysis session                   |
-| `GET`  | `/skin-analysis/history`       | Return the caller's paginated analysis history                         |
+| `POST` | `/skin-analysis/analyze`       | Verify upload and return `202` queued analysis session                 |
+| `GET`  | `/skin-analysis`               | Return the caller's paginated analysis history                         |
 | `GET`  | `/skin-analysis/:analysisId`   | Return an analysis only when it belongs to the caller                  |
 | `POST` | `/payment/top-ups`             | Create a VietQR-backed internal-wallet top-up                          |
 | `POST` | `/payment/premium-checkouts`   | Create a VietQR-backed `PREMIUM` package checkout                      |

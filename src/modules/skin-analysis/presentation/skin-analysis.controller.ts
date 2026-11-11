@@ -3,6 +3,8 @@ import {
   Controller,
   Get,
   Headers,
+  HttpCode,
+  HttpStatus,
   Param,
   Post,
   Query,
@@ -42,6 +44,7 @@ export class SkinAnalysisController {
   }
 
   @Post('analyze')
+  @HttpCode(HttpStatus.ACCEPTED)
   @UseGuards(RateLimitGuard)
   @RateLimit({
     scope: 'skin-analysis-analyze',

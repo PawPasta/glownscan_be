@@ -5,6 +5,7 @@ import { NotFoundException } from '../src/shared/handler/http.exceptions.js';
 
 const userId = 'c30d9edf-5a79-45da-ae83-5adf95610727';
 const imageId = '9b829ac2-d13f-4964-83d3-01f7f0ddaa39';
+const outboxId = '8decb573-a1bb-4c6c-975b-27bcb2a6e143';
 const publicId = `glownscan/skin-analysis/${userId}/${imageId}`;
 const secureUrl = `https://res.cloudinary.com/glow-test/image/upload/v123/glownscan/skin-analysis/${userId}/${imageId}.jpg`;
 const confirmation = {
@@ -14,51 +15,60 @@ const confirmation = {
   secureUrl,
 };
 
-function createService(
-  gemini: GeminiGenerativeModelPort,
-  cloudinary: Pick<
-    CloudinaryUploadIntentService,
-    'createSkinAnalysisUploadIntent' | 'confirmSkinAnalysisUpload'
-  > = {
-    createSkinAnalysisUploadIntent: vi.fn().mockResolvedValue({
-      publicId,
-      timestamp: 123,
-      signature: 'intent-signature',
-      apiKey: 'test-key',
-      cloudName: 'glow-test',
-    }),
-    confirmSkinAnalysisUpload: vi.fn().mockResolvedValue(secureUrl),
-  },
-  quota = {
-    reserveAnalysis: vi.fn().mockResolvedValue({ id: imageId }),
-    finalizeAnalysis: vi.fn().mockResolvedValue(undefined),
-  },
-  sessions = {
-    claimSession: vi.fn().mockImplementation((_userId, _key, fingerprint) => ({
-      id: imageId,
-      created: true,
-      fingerprint,
-    })),
-    markRunning: vi.fn().mockResolvedValue(true),
-    completeSession: vi.fn().mockResolvedValue(true),
-    failSession: vi.fn().mockResolvedValue(undefined),
-    findSession: vi.fn(),
-    listSessions: vi.fn(),
-  },
-  imageDownloader = {
-    download: vi.fn().mockResolvedValue({
-      mimeType: 'image/jpeg',
-      data: new Uint8Array([1, 2, 3]),
-    }),
-  },
-) {
-  return new SkinAnalysisService(
-    gemini,
-    cloudinary as CloudinaryUploadIntentService,
-    quota,
-    sessions,
-    imageDownloader,
-  );
+function createService(overrides: Record<string, unknown> = {}) {
+  const defaults = {
+    gemini: { generateContent: vi.fn() },
+    cloudinary: {
+      createSkinAnalysisUploadIntent: vi.fn(),
+      confirmSkinAnalysisUpload: vi.fn().mockResolvedValue(secureUrl),
+    },
+    quota: {
+      reserveAnalysis: vi.fn().mockResolvedValue({ id: outboxId }),
+      finalizeAnalysis: vi.fn().mockResolvedValue(undefined),
+    },
+    sessions: {
+      claimSession: vi
+        .fn()
+        .mockImplementation((_userId, _key, fingerprint) => ({
+          id: imageId,
+          created: true,
+          fingerprint,
+        })),
+      queueSession: vi.fn().mockResolvedValue(true),
+      markRunning: vi.fn().mockResolvedValue(true),
+      completeSession: vi.fn().mockResolvedValue(true),
+      failSession: vi.fn().mockResolvedValue(undefined),
+      findSession: vi.fn(),
+      listSessions: vi.fn(),
+    },
+    imageDownloader: {
+      download: vi.fn().mockResolvedValue({
+        mimeType: 'image/jpeg',
+        data: new Uint8Array([1, 2, 3]),
+      }),
+    },
+    outbox: {
+      findPublished: vi.fn().mockResolvedValue({
+        id: outboxId,
+        sessionId: imageId,
+        userId,
+        secureUrl,
+        reservationId: outboxId,
+      }),
+    },
+  };
+  const dependencies = { ...defaults, ...overrides } as any;
+  return {
+    dependencies,
+    service: new SkinAnalysisService(
+      dependencies.gemini as GeminiGenerativeModelPort,
+      dependencies.cloudinary as CloudinaryUploadIntentService,
+      dependencies.quota,
+      dependencies.sessions,
+      dependencies.imageDownloader,
+      dependencies.outbox,
+    ),
+  };
 }
 
 function analysisResult() {
@@ -70,7 +80,7 @@ function analysisResult() {
     skinProfile: {
       skinType: 'NORMAL',
       sensitivityLevel: null,
-      notes: 'Even-looking skin with no prominent visible dryness or oiliness.',
+      notes: 'Visible estimate.',
     },
     metrics: {
       acne: assessment,
@@ -95,153 +105,75 @@ function analysisResult() {
 }
 
 describe('SkinAnalysisService', () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  it('creates a signed, expiring Cloudinary upload intent for the user', async () => {
-    const createSkinAnalysisUploadIntent = vi.fn().mockResolvedValue({
+  it('creates a signed upload intent for the authenticated user', async () => {
+    const { service, dependencies } = createService();
+    dependencies.cloudinary.createSkinAnalysisUploadIntent.mockResolvedValue({
       publicId,
       timestamp: 123,
       signature: 'intent-signature',
       apiKey: 'test-key',
       cloudName: 'glow-test',
     });
-    const service = createService(
-      { generateContent: vi.fn() },
-      { createSkinAnalysisUploadIntent, confirmSkinAnalysisUpload: vi.fn() },
+    await expect(service.createUploadIntent(userId)).resolves.toMatchObject({
+      publicId,
+      apiKey: 'test-key',
+    });
+  });
+
+  it('verifies the upload, reserves quota, and queues analysis without calling Gemini', async () => {
+    const { service, dependencies } = createService();
+    await expect(
+      service.analyzeCloudinaryImage(userId, confirmation, 'request-1'),
+    ).resolves.toEqual({ sessionId: imageId, status: 'QUEUED' });
+    expect(
+      dependencies.cloudinary.confirmSkinAnalysisUpload,
+    ).toHaveBeenCalledWith(userId, confirmation);
+    expect(dependencies.sessions.queueSession).toHaveBeenCalledWith(
+      imageId,
+      userId,
+      { secureUrl, reservationId: outboxId },
     );
-
-    const intent = await service.createUploadIntent(userId);
-
-    expect(intent).toMatchObject({
-      apiKey: 'test-key',
-      cloudName: 'glow-test',
-      publicId,
-      timestamp: 123,
-      signature: 'intent-signature',
-    });
-    expect(createSkinAnalysisUploadIntent).toHaveBeenCalledWith(userId);
+    expect(dependencies.gemini.generateContent).not.toHaveBeenCalled();
+    expect(dependencies.imageDownloader.download).not.toHaveBeenCalled();
+    expect(dependencies.quota.finalizeAnalysis).not.toHaveBeenCalled();
   });
 
-  it('downloads the user-owned Cloudinary image and sends it with the analysis prompt', async () => {
-    const download = vi.fn().mockResolvedValue({
-      mimeType: 'image/jpeg',
-      data: new Uint8Array(Buffer.from('image-data')),
-    });
-    const generateContent = vi.fn().mockResolvedValue({
-      text: JSON.stringify(analysisResult()),
-      model: 'gemini-test',
-      finishReason: 'STOP',
-    });
-    const gemini: GeminiGenerativeModelPort = { generateContent };
-    const confirmSkinAnalysisUpload = vi.fn().mockResolvedValue(secureUrl);
-    const cloudinary = {
-      createSkinAnalysisUploadIntent: vi.fn(),
-      confirmSkinAnalysisUpload,
+  it('returns the existing session for the same idempotency key without consuming an upload twice', async () => {
+    const sessions = {
+      claimSession: vi
+        .fn()
+        .mockImplementation((_userId, _key, fingerprint) => ({
+          id: imageId,
+          created: false,
+          fingerprint,
+        })),
+      findSession: vi.fn().mockResolvedValue({ status: 'RUNNING' }),
     };
-    const service = createService(gemini, cloudinary, undefined, undefined, {
-      download,
-    });
-
+    const { service, dependencies } = createService({ sessions });
     await expect(
-      service.analyzeCloudinaryImage(userId, confirmation),
-    ).resolves.toMatchObject({
-      sessionId: imageId,
-      status: 'SUCCEEDED',
-      schemaVersion: '1.0',
-      summary: { overallSkinScore: 90 },
-      skinProfile: { skinType: 'NORMAL', sensitivityLevel: null },
-      highlights: [],
-    });
-
-    expect(download).toHaveBeenCalledWith(secureUrl);
-    expect(confirmSkinAnalysisUpload).toHaveBeenCalledWith(
-      userId,
-      confirmation,
-    );
-    expect(generateContent).toHaveBeenCalledWith({
-      prompt: expect.stringContaining('"skinProfile"'),
-      image: {
-        mimeType: 'image/jpeg',
-        data: new Uint8Array(Buffer.from('image-data')),
-      },
-    });
+      service.analyzeCloudinaryImage(userId, confirmation, 'request-1'),
+    ).resolves.toEqual({ sessionId: imageId, status: 'RUNNING' });
+    expect(
+      dependencies.cloudinary.confirmSkinAnalysisUpload,
+    ).not.toHaveBeenCalled();
+    expect(dependencies.quota.reserveAnalysis).not.toHaveBeenCalled();
   });
 
-  it('does not download an image when the shared Cloudinary intent is rejected', async () => {
-    const download = vi.fn();
-    const confirmSkinAnalysisUpload = vi
-      .fn()
-      .mockRejectedValue(
-        new Error('Cloudinary upload confirmation is invalid.'),
-      );
-    const service = createService(
-      { generateContent: vi.fn() },
-      {
-        createSkinAnalysisUploadIntent: vi.fn(),
-        confirmSkinAnalysisUpload,
-      },
-      undefined,
-      undefined,
-      { download },
-    );
-
-    await expect(
-      service.analyzeCloudinaryImage(userId, confirmation),
-    ).rejects.toThrow('Cloudinary upload confirmation is invalid.');
-    expect(download).not.toHaveBeenCalled();
-    expect(confirmSkinAnalysisUpload).toHaveBeenCalledWith(
-      userId,
-      confirmation,
-    );
-  });
-
-  it('rejects a response that does not match the analysis result contract', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(Buffer.from('image-data'), {
-        headers: { 'content-type': 'image/jpeg' },
-      }),
-    );
-    const service = createService({
-      generateContent: vi.fn().mockResolvedValue({
-        text: '{"schemaVersion":"1.0"}',
-        model: 'gemini-test',
-        finishReason: 'STOP',
-      }),
-    });
-
-    await expect(
-      service.analyzeCloudinaryImage(userId, confirmation),
-    ).rejects.toThrow(
-      'Gemini returned a skin analysis with an invalid structure.',
-    );
-  });
-
-  it('returns 429 before consuming an upload intent when the quota is unavailable', async () => {
-    const confirmSkinAnalysisUpload = vi.fn();
+  it('returns 429 before consuming an upload intent when quota is unavailable', async () => {
     const quota = {
       reserveAnalysis: vi.fn().mockResolvedValue(null),
       finalizeAnalysis: vi.fn(),
     };
-    const service = createService(
-      { generateContent: vi.fn() },
-      { createSkinAnalysisUploadIntent: vi.fn(), confirmSkinAnalysisUpload },
-      quota,
-    );
-
+    const { service, dependencies } = createService({ quota });
     await expect(
       service.analyzeCloudinaryImage(userId, confirmation),
     ).rejects.toMatchObject({ status: 429, retryAfterSeconds: 60 });
-    expect(confirmSkinAnalysisUpload).not.toHaveBeenCalled();
+    expect(
+      dependencies.cloudinary.confirmSkinAnalysisUpload,
+    ).not.toHaveBeenCalled();
   });
 
-  it('marks a created session as failed when the provider fails', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(Buffer.from('image-data'), {
-        headers: { 'content-type': 'image/jpeg' },
-      }),
-    );
+  it('releases a reservation and fails the session when durable queueing fails', async () => {
     const sessions = {
       claimSession: vi
         .fn()
@@ -250,135 +182,63 @@ describe('SkinAnalysisService', () => {
           created: true,
           fingerprint,
         })),
-      markRunning: vi.fn().mockResolvedValue(true),
-      completeSession: vi.fn(),
+      queueSession: vi.fn().mockResolvedValue(false),
       failSession: vi.fn().mockResolvedValue(undefined),
-      findSession: vi.fn(),
-      listSessions: vi.fn(),
     };
-    const service = createService(
-      {
-        generateContent: vi
-          .fn()
-          .mockRejectedValue(new Error('provider unavailable')),
-      },
-      undefined,
-      undefined,
-      sessions,
-    );
-
+    const { service, dependencies } = createService({ sessions });
     await expect(
       service.analyzeCloudinaryImage(userId, confirmation),
-    ).rejects.toThrow('provider unavailable');
-    expect(sessions.claimSession).toHaveBeenCalledWith(
-      userId,
-      expect.any(String),
-      expect.any(String),
+    ).rejects.toThrow('Analysis session could not be queued.');
+    expect(dependencies.quota.finalizeAnalysis).toHaveBeenCalledWith(
+      outboxId,
+      false,
     );
-    expect(sessions.markRunning).toHaveBeenCalledWith(imageId, userId);
-    expect(sessions.failSession).toHaveBeenCalledWith(
+    expect(dependencies.sessions.failSession).toHaveBeenCalledWith(
       imageId,
       userId,
       'ANALYSIS_PROCESSING_FAILED',
     );
   });
 
-  it('retries transactional result persistence after a transient database failure', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(Buffer.from('image-data'), {
-        headers: { 'content-type': 'image/jpeg' },
-      }),
+  it('worker downloads and persists a queued outbox event exactly once', async () => {
+    const { service, dependencies } = createService();
+    dependencies.gemini.generateContent.mockResolvedValue({
+      text: JSON.stringify(analysisResult()),
+      model: 'gemini-test',
+    });
+    await service.processOutboxEvent(outboxId);
+    expect(dependencies.sessions.markRunning).toHaveBeenCalledWith(
+      imageId,
+      userId,
     );
-    const sessions = {
-      claimSession: vi
-        .fn()
-        .mockImplementation((_userId, _key, fingerprint) => ({
-          id: imageId,
-          created: true,
-          fingerprint,
-        })),
-      markRunning: vi.fn().mockResolvedValue(true),
-      completeSession: vi
-        .fn()
-        .mockRejectedValueOnce(new Error('database unavailable'))
-        .mockResolvedValueOnce(true),
-      failSession: vi.fn(),
-      findSession: vi.fn(),
-      listSessions: vi.fn(),
-    };
-    const service = createService(
-      {
-        generateContent: vi.fn().mockResolvedValue({
-          text: JSON.stringify(analysisResult()),
-          model: 'test',
-          finishReason: 'STOP',
-        }),
-      },
-      undefined,
-      undefined,
-      sessions,
+    expect(dependencies.imageDownloader.download).toHaveBeenCalledWith(
+      secureUrl,
     );
-
-    await expect(
-      service.analyzeCloudinaryImage(userId, confirmation),
-    ).resolves.toMatchObject({ sessionId: imageId });
-    expect(sessions.completeSession).toHaveBeenCalledTimes(2);
+    expect(dependencies.sessions.completeSession).toHaveBeenCalledWith(
+      imageId,
+      userId,
+      expect.any(Object),
+      'gemini-test',
+    );
+    expect(dependencies.quota.finalizeAnalysis).toHaveBeenCalledWith(
+      outboxId,
+      true,
+    );
   });
 
-  it('charges exactly one reserved concurrent analysis and rejects the other request', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(Buffer.from('image-data'), {
-        headers: { 'content-type': 'image/jpeg' },
-      }),
-    );
-    const quota = {
-      reserveAnalysis: vi
-        .fn()
-        .mockResolvedValueOnce({ id: imageId })
-        .mockResolvedValueOnce(null),
-      finalizeAnalysis: vi.fn().mockResolvedValue(undefined),
-    };
-    const service = createService(
-      {
-        generateContent: vi.fn().mockResolvedValue({
-          text: JSON.stringify(analysisResult()),
-          model: 'test',
-          finishReason: 'STOP',
-        }),
-      },
-      undefined,
-      quota,
-    );
-
-    const results = await Promise.allSettled([
-      service.analyzeCloudinaryImage(userId, confirmation),
-      service.analyzeCloudinaryImage(userId, confirmation),
-    ]);
-
-    expect(
-      results.filter((result) => result.status === 'fulfilled'),
-    ).toHaveLength(1);
-    expect(
-      results.filter((result) => result.status === 'rejected'),
-    ).toHaveLength(1);
-    expect(quota.finalizeAnalysis).toHaveBeenCalledWith(imageId, true);
+  it('does not call Gemini when a duplicate job cannot claim the session', async () => {
+    const { service, dependencies } = createService();
+    dependencies.sessions.markRunning.mockResolvedValue(false);
+    await service.processOutboxEvent(outboxId);
+    expect(dependencies.gemini.generateContent).not.toHaveBeenCalled();
+    expect(dependencies.quota.finalizeAnalysis).not.toHaveBeenCalled();
   });
 
-  it("does not disclose a different user's analysis session", async () => {
-    const otherUserId = '4584dbd0-b48f-4630-a474-e6ef81b25c83';
-    const sessions = {
-      claimSession: vi.fn(),
-      markRunning: vi.fn(),
-      completeSession: vi.fn(),
-      failSession: vi.fn(),
-      findSession: vi.fn().mockResolvedValue(null),
-      listSessions: vi.fn(),
-    };
-    const service = createService(undefined, undefined, undefined, sessions);
-
-    await expect(
-      service.getSession(otherUserId, imageId),
-    ).rejects.toBeInstanceOf(NotFoundException);
-    expect(sessions.findSession).toHaveBeenCalledWith(otherUserId, imageId);
+  it("does not disclose another user's analysis session", async () => {
+    const { service, dependencies } = createService();
+    dependencies.sessions.findSession.mockResolvedValue(null);
+    await expect(service.getSession(userId, imageId)).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 });

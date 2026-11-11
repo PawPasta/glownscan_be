@@ -17,6 +17,12 @@ import { SKIN_ASSESSMENT_PORT } from './application/ports/skin-assessment.port.j
 import { SkinAssessmentService } from './application/use-case/skin-assessment.service.js';
 import { PostgresSkinAssessmentAdapter } from './infrastructure/adapters/postgres-skin-assessment.adapter.js';
 import { SkinAssessmentController } from './presentation/skin-assessment.controller.js';
+import { ANALYSIS_OUTBOX_PORT } from './application/ports/analysis-outbox.port.js';
+import { PostgresAnalysisOutboxAdapter } from './infrastructure/adapters/postgres-analysis-outbox.adapter.js';
+import { ANALYSIS_WORK_QUEUE_PORT } from './application/ports/analysis-work-queue.port.js';
+import { BullMqAnalysisWorkQueueAdapter } from './infrastructure/adapters/bullmq-analysis-work-queue.adapter.js';
+import { AnalysisOutboxDispatcher } from './infrastructure/workers/analysis-outbox-dispatcher.service.js';
+import { AnalysisWorker } from './infrastructure/workers/analysis-worker.service.js';
 
 @Module({
   imports: [ConfigModule, AuthModule, CloudinaryModule, RateLimitModule],
@@ -26,9 +32,13 @@ import { SkinAssessmentController } from './presentation/skin-assessment.control
     CloudinaryImageDownloader,
     PostgresAnalysisQuotaAdapter,
     PostgresAnalysisSessionAdapter,
+    PostgresAnalysisOutboxAdapter,
+    BullMqAnalysisWorkQueueAdapter,
     PostgresSkinAssessmentAdapter,
     SkinAnalysisService,
     SkinAssessmentService,
+    AnalysisOutboxDispatcher,
+    AnalysisWorker,
     {
       provide: GEMINI_GENERATIVE_MODEL_PORT,
       useExisting: GeminiGenerativeModelAdapter,
@@ -38,6 +48,14 @@ import { SkinAssessmentController } from './presentation/skin-assessment.control
     {
       provide: ANALYSIS_SESSION_PORT,
       useExisting: PostgresAnalysisSessionAdapter,
+    },
+    {
+      provide: ANALYSIS_OUTBOX_PORT,
+      useExisting: PostgresAnalysisOutboxAdapter,
+    },
+    {
+      provide: ANALYSIS_WORK_QUEUE_PORT,
+      useExisting: BullMqAnalysisWorkQueueAdapter,
     },
     {
       provide: SKIN_ASSESSMENT_PORT,
