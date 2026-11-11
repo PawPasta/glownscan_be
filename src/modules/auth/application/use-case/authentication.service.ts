@@ -5,6 +5,8 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  InvalidAccessTokenException,
+  SessionRevokedException,
   UnauthorizedException,
 } from '../../../../shared/handler/http.exceptions.js';
 import type { SecurityContext } from '../../../../shared/security/security.context.js';
@@ -365,9 +367,11 @@ export class AuthenticationService {
   }> {
     let payload: TokenPayload;
     try {
-      payload = await this.tokenService.verifyAccessToken(input.accessToken);
+      payload = await this.tokenService.verifyAccessTokenForRefresh(
+        input.accessToken,
+      );
     } catch {
-      throw new UnauthorizedException('Access token is invalid.');
+      throw new InvalidAccessTokenException();
     }
     const context = await this.validateAccessToken(payload);
     const replacementToken = this.tokenService.createOpaqueToken();
@@ -378,7 +382,7 @@ export class AuthenticationService {
       context.userId,
     );
     if (!user || user.status !== UserStatus.Active) {
-      throw new UnauthorizedException('Refresh token is invalid or expired.');
+      throw new SessionRevokedException();
     }
     return {
       accessToken: await this.tokenService.issueAccessToken(user),
@@ -506,7 +510,7 @@ export class AuthenticationService {
       user.status !== UserStatus.Active ||
       user.tokenVersion !== payload.tokenVersion
     ) {
-      throw new UnauthorizedException('Access token is no longer valid.');
+      throw new SessionRevokedException();
     }
     return {
       userId: user.id,
