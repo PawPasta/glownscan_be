@@ -260,12 +260,18 @@ provider call release the credit.
 ## Mobile authentication API
 
 `POST /auth/mobile/login` accepts `email`, `password`, `platform` (`ANDROID` or
-`IOS`), and `fcmToken`. A successful login stores or refreshes the FCM
-registration associated with the login device.
+`IOS`), plus optional `installationId` and `fcmToken`. FCM is deliberately not
+required for login. Flutter stores the session, obtains its FCM token, then
+calls authenticated `PUT /devices/me` with `installationId`, `platform`, and
+`fcmToken`. The stable installation ID makes synchronization an upsert rather
+than creating a device on each app launch. Call `DELETE /devices/me` with the
+installation ID before clearing the local session to disable push delivery.
+`POST /auth/logout` also deactivates the push registration associated with the
+revoked refresh-token session as a server-side fallback.
 
-`POST /auth/firebase/mobile/login` accepts `idToken`, `platform` (`ANDROID` or
-`IOS`), and `fcmToken`. Firebase mobile login verifies the ID token and stores
-or refreshes the FCM registration associated with the login device.
+`POST /auth/firebase/mobile/login` follows the same device-registration flow:
+`idToken` and `platform` are required; `installationId` and `fcmToken` are
+optional at login and can be synchronized later through `PUT /devices/me`.
 
 Mobile clients can poll `POST /auth/verify-email/check` and
 `POST /auth/password/reset/check` with `{ "email": "...", "token": "..." }`.
@@ -384,6 +390,8 @@ The auth `Password` value object requires at least six characters, including an 
 | `POST` | `/auth/login`                  | Return a JWT access token and opaque refresh token                     |
 | `POST` | `/auth/firebase/login`         | Verify a Firebase ID token, link/create the account, and return tokens |
 | `POST` | `/auth/firebase/mobile/login`  | Firebase mobile login; also register the device FCM token              |
+| `PUT`  | `/devices/me`                  | Upsert the caller's FCM token for a stable installation ID              |
+| `DELETE` | `/devices/me`                | Disable notifications for the caller's installation ID                  |
 | `POST` | `/auth/refresh`                | Rotate a refresh token and return a new access/refresh token pair      |
 | `POST` | `/auth/logout`                 | Revoke the refresh token family                                        |
 | `POST` | `/auth/password/reset/request` | Send a reset link without revealing whether the email exists           |

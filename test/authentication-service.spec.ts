@@ -6,6 +6,7 @@ import { vi } from 'vitest';
 import {
   CHANGE_PASSWORD_PORT,
   CHECK_ACTION_TOKEN_PORT,
+  DEVICE_REGISTRATION_PORT,
   FIREBASE_ID_TOKEN_VERIFIER_PORT,
   FIREBASE_LOGIN_PORT,
   FirebaseAccountConflictError,
@@ -56,6 +57,8 @@ describe('AuthenticationService', () => {
     revokeRefreshToken: ReturnType<typeof vi.fn>;
     getProfile: ReturnType<typeof vi.fn>;
     updateUserProfile: ReturnType<typeof vi.fn>;
+    syncDeviceRegistration: ReturnType<typeof vi.fn>;
+    deactivateDeviceRegistration: ReturnType<typeof vi.fn>;
   };
   let emailService: {
     sendVerificationEmail: ReturnType<typeof vi.fn>;
@@ -89,6 +92,8 @@ describe('AuthenticationService', () => {
       revokeRefreshToken: vi.fn().mockResolvedValue(undefined),
       getProfile: vi.fn().mockResolvedValue({ profile: { id: userId } }),
       updateUserProfile: vi.fn().mockResolvedValue(undefined),
+      syncDeviceRegistration: vi.fn().mockResolvedValue(undefined),
+      deactivateDeviceRegistration: vi.fn().mockResolvedValue(undefined),
     };
     emailService = {
       sendVerificationEmail: vi.fn().mockResolvedValue(undefined),
@@ -123,6 +128,7 @@ describe('AuthenticationService', () => {
         { provide: CHANGE_PASSWORD_PORT, useValue: repository },
         { provide: VALIDATE_ACCESS_TOKEN_PORT, useValue: repository },
         { provide: USER_PROFILE_PORT, useValue: repository },
+        { provide: DEVICE_REGISTRATION_PORT, useValue: repository },
         { provide: SmtpEmailService, useValue: emailService },
         { provide: JwtService, useValue: jwt },
         {
@@ -251,6 +257,60 @@ describe('AuthenticationService', () => {
     ];
     expect(session.platform).toBe('IOS');
     expect(session.fcmToken).toBe('fcm-registration-token');
+  });
+
+  it('allows mobile login before Firebase has issued an FCM token', async () => {
+    repository.findUserByEmail.mockResolvedValue({
+      id: userId,
+      email: 'user@example.com',
+      passwordHash: await hash('Glow123!', 4),
+      status: UserStatus.Active,
+      tokenVersion: 1,
+      roles: ['USER'],
+      failedLoginCount: 0,
+      lockedUntil: null,
+    });
+
+    await service.loginMobile(
+      {
+        email: 'user@example.com',
+        password: 'Glow123!',
+        platform: 'IOS',
+        installationId: 'flutter-installation-123',
+      },
+      { ipAddress: null, userAgent: null },
+    );
+
+    expect(repository.createRefreshSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceUuid: 'flutter-installation-123',
+        fcmToken: undefined,
+      }),
+    );
+  });
+
+  it('synchronizes and deactivates only the authenticated user device', async () => {
+    await expect(
+      service.syncDeviceRegistration(userId, {
+        installationId: ' flutter-installation-123 ',
+        platform: 'ANDROID',
+        fcmToken: ' fcm-token ',
+      }),
+    ).resolves.toEqual({ message: 'Device registration synchronized.' });
+    expect(repository.syncDeviceRegistration).toHaveBeenCalledWith(userId, {
+      installationId: 'flutter-installation-123',
+      platform: 'ANDROID',
+      fcmToken: 'fcm-token',
+    });
+
+    await service.deactivateDeviceRegistration(
+      userId,
+      ' flutter-installation-123 ',
+    );
+    expect(repository.deactivateDeviceRegistration).toHaveBeenCalledWith(
+      userId,
+      'flutter-installation-123',
+    );
   });
 
   it('checks whether an email action token was successfully consumed', async () => {

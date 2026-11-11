@@ -50,6 +50,21 @@ export interface RefreshSessionData {
   userAgent: string | null;
 }
 
+export interface DeviceRegistrationPort {
+  syncDeviceRegistration(
+    userId: Uuid,
+    input: {
+      installationId: string;
+      platform: 'ANDROID' | 'IOS';
+      fcmToken: string;
+    },
+  ): Promise<void>;
+  deactivateDeviceRegistration(
+    userId: Uuid,
+    installationId: string,
+  ): Promise<void>;
+}
+
 export interface RegisterAccountPort {
   registerUser(data: RegisterUserData): Promise<void>;
 }
@@ -179,3 +194,4 @@ export const RESET_PASSWORD_PORT = Symbol('RESET_PASSWORD_PORT');
 export const CHANGE_PASSWORD_PORT = Symbol('CHANGE_PASSWORD_PORT');
 export const VALIDATE_ACCESS_TOKEN_PORT = Symbol('VALIDATE_ACCESS_TOKEN_PORT');
 export const USER_PROFILE_PORT = Symbol('USER_PROFILE_PORT');
+export const DEVICE_REGISTRATION_PORT = Symbol('DEVICE_REGISTRATION_PORT');

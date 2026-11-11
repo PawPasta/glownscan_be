@@ -20,6 +20,7 @@ import { Password } from '../../domain/value-objects/password.vo.js';
 import {
   CHANGE_PASSWORD_PORT,
   CHECK_ACTION_TOKEN_PORT,
+  DEVICE_REGISTRATION_PORT,
   FIREBASE_ID_TOKEN_VERIFIER_PORT,
   FIREBASE_LOGIN_PORT,
   FirebaseAccountConflictError,
@@ -34,6 +35,7 @@ import {
   VALIDATE_ACCESS_TOKEN_PORT,
   VERIFY_EMAIL_PORT,
   type ChangePasswordPort,
+  type DeviceRegistrationPort,
   type CheckActionTokenPort,
   type AuthUserRecord,
   type FirebaseIdTokenVerifierPort,
@@ -96,6 +98,8 @@ export class AuthenticationService {
     private readonly validateAccessTokenPort: ValidateAccessTokenPort,
     @Inject(USER_PROFILE_PORT)
     private readonly userProfilePort: UserProfilePort,
+    @Inject(DEVICE_REGISTRATION_PORT)
+    private readonly deviceRegistrationPort: DeviceRegistrationPort,
     private readonly emailService: SmtpEmailService,
     private readonly tokenService: TokenService,
   ) {}
@@ -218,6 +222,7 @@ export class AuthenticationService {
       password: string;
       platform?: string;
       fcmToken?: string;
+      installationId?: string;
     },
     metadata: RequestMetadata,
   ): Promise<{ accessToken: string; refreshToken: string }> {
@@ -258,6 +263,7 @@ export class AuthenticationService {
       input.platform,
       metadata,
       input.fcmToken,
+      input.installationId,
     );
   }
 
@@ -266,19 +272,24 @@ export class AuthenticationService {
       email: string;
       password: string;
       platform: 'ANDROID' | 'IOS';
-      fcmToken: string;
+      fcmToken?: string;
+      installationId?: string;
     },
     metadata: RequestMetadata,
   ): Promise<{ accessToken: string; refreshToken: string }> {
-    const fcmToken = input.fcmToken.trim();
-    if (!fcmToken) {
-      throw new BadRequestException('FCM token must not be empty.');
-    }
-    return this.login({ ...input, fcmToken }, metadata);
+    return this.login(
+      { ...input, fcmToken: normalizeOptionalFcmToken(input.fcmToken) },
+      metadata,
+    );
   }
 
   async loginWithFirebase(
-    input: { idToken: string; platform?: string; fcmToken?: string },
+    input: {
+      idToken: string;
+      platform?: string;
+      fcmToken?: string;
+      installationId?: string;
+    },
     metadata: RequestMetadata,
   ): Promise<{ accessToken: string; refreshToken: string }> {
     let identity: FirebaseIdentityClaims;
@@ -341,6 +352,7 @@ export class AuthenticationService {
       input.platform,
       metadata,
       input.fcmToken,
+      input.installationId,
     );
   }
 
@@ -348,16 +360,15 @@ export class AuthenticationService {
     input: {
       idToken: string;
       platform: 'ANDROID' | 'IOS';
-      fcmToken: string;
+      fcmToken?: string;
+      installationId?: string;
     },
     metadata: RequestMetadata,
   ): Promise<{ accessToken: string; refreshToken: string }> {
-    const fcmToken = input.fcmToken.trim();
-    if (!fcmToken) {
-      throw new BadRequestException('FCM token must not be empty.');
-    }
-
-    return this.loginWithFirebase({ ...input, fcmToken }, metadata);
+    return this.loginWithFirebase(
+      { ...input, fcmToken: normalizeOptionalFcmToken(input.fcmToken) },
+      metadata,
+    );
   }
 
   async refresh(input: { accessToken: string; refreshToken: string }): Promise<{
@@ -396,6 +407,42 @@ export class AuthenticationService {
       this.tokenService.hashToken(refreshToken),
     );
     return { message: 'Logged out successfully.' };
+  }
+
+  async syncDeviceRegistration(
+    userId: Uuid,
+    input: {
+      installationId: string;
+      platform: 'ANDROID' | 'IOS';
+      fcmToken: string;
+    },
+  ): Promise<{ message: string }> {
+    const installationId = input.installationId.trim();
+    const fcmToken = input.fcmToken.trim();
+    if (!installationId || !fcmToken) {
+      throw new BadRequestException(
+        'Installation ID and FCM token must not be empty.',
+      );
+    }
+    await this.deviceRegistrationPort.syncDeviceRegistration(userId, {
+      installationId,
+      platform: input.platform,
+      fcmToken,
+    });
+    return { message: 'Device registration synchronized.' };
+  }
+
+  async deactivateDeviceRegistration(
+    userId: Uuid,
+    installationId: string,
+  ): Promise<void> {
+    const normalized = installationId.trim();
+    if (!normalized)
+      throw new BadRequestException('Installation ID must not be empty.');
+    await this.deviceRegistrationPort.deactivateDeviceRegistration(
+      userId,
+      normalized,
+    );
   }
 
   async requestPasswordReset(
@@ -481,11 +528,12 @@ export class AuthenticationService {
     platform: string | undefined,
     metadata: RequestMetadata,
     fcmToken?: string,
+    installationId?: string,
   ): Promise<{ accessToken: string; refreshToken: string }> {
     const refreshToken = this.tokenService.createOpaqueToken();
     const session: RefreshSessionData = {
       userId: user.id,
-      deviceUuid: randomUUID(),
+      deviceUuid: installationId?.trim() || randomUUID(),
       platform: parsePlatform(platform),
       fcmToken,
       tokenHash: this.tokenService.hashToken(refreshToken),
@@ -529,6 +577,14 @@ function parsePlatform(platform?: string): 'ANDROID' | 'IOS' | 'WEBSITE' {
     return platform;
   }
   throw new BadRequestException('Platform must be ANDROID, IOS, or WEBSITE.');
+}
+
+function normalizeOptionalFcmToken(token?: string): string | undefined {
+  if (token === undefined) return undefined;
+  const normalized = token.trim();
+  if (!normalized)
+    throw new BadRequestException('FCM token must not be empty.');
+  return normalized;
 }
 
 function isUniqueViolation(error: unknown): boolean {

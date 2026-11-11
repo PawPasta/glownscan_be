@@ -6,6 +6,7 @@ import { CloudinaryModule } from '../cloudinary/cloudinary.module.js';
 import {
   CHANGE_PASSWORD_PORT,
   CHECK_ACTION_TOKEN_PORT,
+  DEVICE_REGISTRATION_PORT,
   FIREBASE_ID_TOKEN_VERIFIER_PORT,
   FIREBASE_LOGIN_PORT,
   LOGIN_PORT,
@@ -30,6 +31,7 @@ import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module.js';
 import { AdminGuard } from '../../shared/security/admin.guard.js';
 import { AdminAccountService } from './application/use-case/admin-account.service.js';
 import { AdminAccountController } from './presentation/admin-account.controller.js';
+import { DeviceController } from './presentation/device.controller.js';
 
 @Module({
   imports: [
@@ -70,7 +72,7 @@ import { AdminAccountController } from './presentation/admin-account.controller.
       },
     }),
   ],
-  controllers: [AuthController, AdminAccountController],
+  controllers: [AuthController, AdminAccountController, DeviceController],
   providers: [
     PostgresAuthenticationAdapter,
     {
@@ -128,6 +130,10 @@ import { AdminAccountController } from './presentation/admin-account.controller.
     },
     {
       provide: USER_PROFILE_PORT,
+      useExisting: PostgresAuthenticationAdapter,
+    },
+    {
+      provide: DEVICE_REGISTRATION_PORT,
       useExisting: PostgresAuthenticationAdapter,
     },
     AuthenticationService,
