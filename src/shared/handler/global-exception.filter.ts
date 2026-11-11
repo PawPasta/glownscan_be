@@ -9,6 +9,7 @@ import {
 import type { Request, Response } from 'express';
 import type { ApiResponse } from '../api/api-response.ts';
 import { TooManyRequestsException } from './http.exceptions.js';
+import { ApiException } from './http.exceptions.js';
 import type { RequestWithContext } from '../observability/request-context.js';
 
 @Catch()
@@ -54,6 +55,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       message,
       data: null,
     };
+    if (exception instanceof ApiException) body.errorCode = exception.errorCode;
     if (
       exception instanceof TooManyRequestsException &&
       exception.retryAfterSeconds

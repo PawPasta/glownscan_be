@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { GlobalExceptionFilter } from '../src/shared/handler/global-exception.filter.js';
 import {
   ConflictException,
+  AccessTokenExpiredException,
   TooManyRequestsException,
 } from '../src/shared/handler/http.exceptions.js';
 
@@ -123,6 +124,27 @@ describe('GlobalExceptionFilter', () => {
       status: 429,
       message: 'Try later',
       data: null,
+    });
+  });
+
+  it('returns a stable auth error code for client refresh handling', () => {
+    const json = vi.fn();
+    const status = vi.fn(() => ({ json }));
+    const filter = new GlobalExceptionFilter();
+    const host = {
+      switchToHttp: () => ({
+        getResponse: () => ({ status }),
+        getRequest: () => ({ method: 'GET', url: '/auth/profile' }),
+      }),
+    };
+
+    filter.catch(new AccessTokenExpiredException(), host as ArgumentsHost);
+
+    expect(json).toHaveBeenCalledWith({
+      status: HttpStatus.UNAUTHORIZED,
+      message: 'Access token has expired.',
+      data: null,
+      errorCode: 'ACCESS_TOKEN_EXPIRED',
     });
   });
 });
