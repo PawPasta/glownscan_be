@@ -38,7 +38,7 @@ describe('database migrations', () => {
     expect(auth?.sql).toContain('date_of_birth DATE');
     expect(auth?.sql).toContain('gender VARCHAR(30)');
     expect(migrations.map(({ version }) => Number(version))).toEqual([
-      1, 2, 3, 4, 5, 6,
+      1, 2, 3, 4, 5, 6, 7,
     ]);
     expect(
       migrations.find(({ version }) => Number(version) === 6)?.sql,
@@ -46,6 +46,11 @@ describe('database migrations', () => {
     expect(
       migrations.find(({ version }) => Number(version) === 6)?.sql,
     ).toContain('CREATE TABLE IF NOT EXISTS app_billing.premium_packages');
+    expect(
+      migrations.find(({ version }) => Number(version) === 7)?.sql,
+    ).toContain(
+      'CREATE TABLE IF NOT EXISTS app_skin_analysis.user_assessments',
+    );
     expect(
       migrations.some(({ sql }) =>
         sql.includes('CREATE SCHEMA IF NOT EXISTS app_profile'),

@@ -13,16 +13,22 @@ import { ANALYSIS_SESSION_PORT } from './application/ports/analysis-session.port
 import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module.js';
 import { IMAGE_DOWNLOADER_PORT } from './application/ports/image-downloader.port.js';
 import { CloudinaryImageDownloader } from './infrastructure/adapters/cloudinary-image-downloader.js';
+import { SKIN_ASSESSMENT_PORT } from './application/ports/skin-assessment.port.js';
+import { SkinAssessmentService } from './application/use-case/skin-assessment.service.js';
+import { PostgresSkinAssessmentAdapter } from './infrastructure/adapters/postgres-skin-assessment.adapter.js';
+import { SkinAssessmentController } from './presentation/skin-assessment.controller.js';
 
 @Module({
   imports: [ConfigModule, AuthModule, CloudinaryModule, RateLimitModule],
-  controllers: [SkinAnalysisController],
+  controllers: [SkinAnalysisController, SkinAssessmentController],
   providers: [
     GeminiGenerativeModelAdapter,
     CloudinaryImageDownloader,
     PostgresAnalysisQuotaAdapter,
     PostgresAnalysisSessionAdapter,
+    PostgresSkinAssessmentAdapter,
     SkinAnalysisService,
+    SkinAssessmentService,
     {
       provide: GEMINI_GENERATIVE_MODEL_PORT,
       useExisting: GeminiGenerativeModelAdapter,
@@ -32,6 +38,10 @@ import { CloudinaryImageDownloader } from './infrastructure/adapters/cloudinary-
     {
       provide: ANALYSIS_SESSION_PORT,
       useExisting: PostgresAnalysisSessionAdapter,
+    },
+    {
+      provide: SKIN_ASSESSMENT_PORT,
+      useExisting: PostgresSkinAssessmentAdapter,
     },
   ],
   exports: [GEMINI_GENERATIVE_MODEL_PORT],
