@@ -2,7 +2,7 @@
 
 GlowScan is a personalized skincare application. This repository contains the backend API intended to support the mobile app and admin dashboard.
 
-> **Implementation status:** The backend includes authentication, profiles, a persisted skin assessment, synchronous skin analysis, PostgreSQL integration, and wallet-backed `PREMIUM` payments via SePay. Payment confirmation can notify registered mobile devices and email recipients. Routines, recommendation/catalog management, progress tracking, and background analysis workers remain planned.
+> **Implementation status:** The backend includes authentication, profiles, a persisted skin assessment, synchronous skin analysis, PostgreSQL integration, wallet-backed `PREMIUM` payments via SePay, and an administrator-managed product catalog. Payment confirmation can notify registered mobile devices and email recipients. Routines, recommendations, progress tracking, and background analysis workers remain planned.
 
 ## Product flows
 
@@ -79,7 +79,10 @@ Admin signs in
   → Maintain affiliate links
 ```
 
-The curated catalog is intended to supply product recommendations to users. Purchases through affiliate links take place on external marketplaces, not in GlowScan.
+The catalog exposes public read endpoints and `ADMIN`-only CRUD for products,
+ingredients, skin concerns, affiliate links, and administrator account
+management. Purchases through affiliate links take place on external
+marketplaces, not in GlowScan.
 
 ## Flow and requirements diagrams
 
@@ -419,8 +422,10 @@ The initial migration sequence is:
 | V005    | Rate-limit and analysis quota schema                                                                          |
 | V006    | Internal wallets, SePay payment orders/events, ledger, and PREMIUM subscriptions                              |
 | V007    | Versioned user skin-assessment questionnaire                                                                  |
+| V008    | Product catalog, ingredients, skin concerns, and affiliate links                                              |
+| V009    | 100 replaceable Lorem demo catalog products                                                                   |
 
-Add a new `V<number>__description.sql` file for future changes; do not edit a migration after it has been applied. The runner detects missing or modified applied migrations and stops with an error. The current V001–V007 set requires a clean schema. `npm run db:migrate:reset` drops the application schemas (`app_auth`, `app_cloudinary`, `app_skin_analysis`, `app_billing`), the legacy `app_profile` schema, and `public.schema_migrations`, then reapplies all migrations. It does not drop unrelated schemas, but is destructive and has no confirmation guard; verify `GLOWNSCAN_DATABASE_URL` and use only for demo/development data. Never run it against production or a database whose data must be retained. If the old combined SQL script was already run, do not apply these migrations blindly; back up and baseline that database deliberately.
+Add a new `V<number>__description.sql` file for future changes; do not edit a migration after it has been applied. The runner detects missing or modified applied migrations and stops with an error. The current V001–V009 set requires a clean schema. `npm run db:migrate:reset` drops the application schemas (`app_auth`, `app_cloudinary`, `app_skin_analysis`, `app_billing`, `app_catalog`), the legacy `app_profile` schema, and `public.schema_migrations`, then reapplies all migrations. It does not drop unrelated schemas, but is destructive and has no confirmation guard; verify `GLOWNSCAN_DATABASE_URL` and use only for demo/development data. Never run it against production or a database whose data must be retained. If the old combined SQL script was already run, do not apply these migrations blindly; back up and baseline that database deliberately.
 
 The migration role should be separate from the application's runtime credentials. The schemas enable row-level security and revoke access from `PUBLIC`; configure the required database grants and RLS policies for the runtime role as part of application integration.
 
