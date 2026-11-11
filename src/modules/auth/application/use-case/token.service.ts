@@ -15,6 +15,8 @@ export interface TokenPayload {
 export class TokenService {
   readonly accessTokenTtlSeconds: number;
   readonly refreshTokenTtlDays: number;
+  readonly issuer: string;
+  readonly audience: string;
 
   constructor(
     private readonly jwt: JwtService,
@@ -25,6 +27,11 @@ export class TokenService {
     );
     this.refreshTokenTtlDays = Number(
       config.get<string>('GLOWNSCAN_REFRESH_TOKEN_TTL_DAYS', '30'),
+    );
+    this.issuer = config.get<string>('GLOWNSCAN_JWT_ISSUER', 'glownscan-api');
+    this.audience = config.get<string>(
+      'GLOWNSCAN_JWT_AUDIENCE',
+      'glownscan-client',
     );
     if (
       !Number.isInteger(this.accessTokenTtlSeconds) ||
@@ -37,17 +44,21 @@ export class TokenService {
   }
 
   issueAccessToken(user: AuthUserRecord): Promise<string> {
-    return this.jwt.signAsync({
-      sub: user.id,
-      email: user.email,
-      tokenVersion: user.tokenVersion,
-      roles: user.roles,
-    } satisfies TokenPayload);
+    return this.jwt.signAsync(
+      {
+        sub: user.id,
+        email: user.email,
+        tokenVersion: user.tokenVersion,
+        roles: user.roles,
+      } satisfies TokenPayload,
+      { issuer: this.issuer, audience: this.audience },
+    );
   }
 
   verifyAccessToken(token: string): Promise<TokenPayload> {
     return this.jwt.verifyAsync<TokenPayload>(token, {
-      ignoreExpiration: true,
+      issuer: this.issuer,
+      audience: this.audience,
     });
   }
 

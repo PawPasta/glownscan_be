@@ -1,4 +1,12 @@
-import { IsInt, IsString, Matches, MaxLength, Min } from 'class-validator';
+import {
+  IsInt,
+  IsOptional,
+  IsString,
+  Matches,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class ConfirmSkinAnalysisUploadDto {
   @IsString()
@@ -17,4 +25,9 @@ export class ConfirmSkinAnalysisUploadDto {
   @Matches(/^https:\/\/res\.cloudinary\.com\/.+$/)
   @MaxLength(2048)
   secureUrl!: string;
+}
+
+export class AnalysisHistoryQueryDto {
+  @IsOptional() @IsInt() @Min(1) page = 1;
+  @IsOptional() @IsInt() @Min(1) @Max(100) limit = 20;
 }

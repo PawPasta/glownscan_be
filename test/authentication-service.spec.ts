@@ -28,7 +28,6 @@ import { SmtpEmailService } from '../src/modules/auth/infrastructure/adapters/sm
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   UnauthorizedException,
 } from '../src/shared/handler/http.exceptions.js';
 
@@ -42,6 +41,7 @@ describe('AuthenticationService', () => {
     findOrCreateFirebaseUser: ReturnType<typeof vi.fn>;
     findUserByEmail: ReturnType<typeof vi.fn>;
     findUserById: ReturnType<typeof vi.fn>;
+    unlockExpiredLoginLock: ReturnType<typeof vi.fn>;
     recordFailedLogin: ReturnType<typeof vi.fn>;
     clearFailedLogins: ReturnType<typeof vi.fn>;
     resendVerificationToken: ReturnType<typeof vi.fn>;
@@ -74,6 +74,7 @@ describe('AuthenticationService', () => {
       findOrCreateFirebaseUser: vi.fn(),
       findUserByEmail: vi.fn(),
       findUserById: vi.fn(),
+      unlockExpiredLoginLock: vi.fn().mockResolvedValue(undefined),
       recordFailedLogin: vi.fn().mockResolvedValue(undefined),
       clearFailedLogins: vi.fn().mockResolvedValue(undefined),
       resendVerificationToken: vi.fn().mockResolvedValue(undefined),
@@ -185,8 +186,8 @@ describe('AuthenticationService', () => {
       true,
     );
     expect(registration.verificationTokenHash).toMatch(/^[0-9a-f]{64}$/);
-    const [sentEmail, rawToken] =
-      emailService.sendVerificationEmail.mock.calls[0] as [string, string];
+    const [sentEmail, rawToken] = emailService.sendVerificationEmail.mock
+      .calls[0] as [string, string];
     expect(sentEmail).toBe('user@example.com');
     expect(rawToken).not.toBe(registration.verificationTokenHash);
   });
@@ -266,8 +267,10 @@ describe('AuthenticationService', () => {
       expect.any(String),
       'VERIFY_EMAIL',
     );
-    const [, tokenHash] =
-      repository.hasConsumedActionToken.mock.calls[0] as [string, string];
+    const [, tokenHash] = repository.hasConsumedActionToken.mock.calls[0] as [
+      string,
+      string,
+    ];
     expect(tokenHash).not.toBe('raw-action-token');
   });
 
@@ -459,7 +462,7 @@ describe('AuthenticationService', () => {
     expect(repository.createRefreshSession).not.toHaveBeenCalled();
   });
 
-  it('rotates refresh tokens only when paired with a valid current access token', async () => {
+  it('rotates refresh tokens only when paired with a valid, unexpired current access token', async () => {
     const claims = {
       sub: userId,
       email: 'user@example.com',
@@ -481,14 +484,14 @@ describe('AuthenticationService', () => {
     repository.rotateRefreshToken.mockResolvedValue(user);
 
     const result = await service.refresh({
-      accessToken: 'expired-but-valid-access-token',
+      accessToken: 'current-access-token',
       refreshToken: 'current-refresh-token'.padEnd(32, 'x'),
     });
 
-    expect(jwt.verifyAsync).toHaveBeenCalledWith(
-      'expired-but-valid-access-token',
-      { ignoreExpiration: true },
-    );
+    expect(jwt.verifyAsync).toHaveBeenCalledWith('current-access-token', {
+      issuer: 'glownscan-api',
+      audience: 'glownscan-client',
+    });
     expect(repository.rotateRefreshToken).toHaveBeenCalledWith(
       expect.stringMatching(/^[0-9a-f]{64}$/),
       expect.stringMatching(/^[0-9a-f]{64}$/),
@@ -508,6 +511,19 @@ describe('AuthenticationService', () => {
         refreshToken: 'current-refresh-token'.padEnd(32, 'x'),
       }),
     ).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(repository.rotateRefreshToken).not.toHaveBeenCalled();
+  });
+
+  it('does not rotate a refresh token when the paired access token is expired', async () => {
+    jwt.verifyAsync.mockRejectedValue(new Error('jwt expired'));
+
+    await expect(
+      service.refresh({
+        accessToken: 'expired-access-token',
+        refreshToken: 'current-refresh-token'.padEnd(32, 'x'),
+      }),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+
     expect(repository.rotateRefreshToken).not.toHaveBeenCalled();
   });
 
@@ -551,8 +567,32 @@ describe('AuthenticationService', () => {
         { email: 'user@example.com', password: 'Glow123!' },
         { ipAddress: null, userAgent: null },
       ),
-    ).rejects.toBeInstanceOf(ForbiddenException);
+    ).rejects.toBeInstanceOf(UnauthorizedException);
     expect(repository.createRefreshSession).not.toHaveBeenCalled();
+  });
+
+  it('unlocks an expired login lock before allowing a valid login', async () => {
+    repository.findUserByEmail.mockResolvedValue({
+      id: userId,
+      email: 'user@example.com',
+      passwordHash: await hash('Glow123!', 4),
+      status: UserStatus.Locked,
+      tokenVersion: 1,
+      roles: ['USER'],
+      failedLoginCount: 5,
+      lockedUntil: new Date(Date.now() - 1_000),
+    });
+
+    await expect(
+      service.login(
+        { email: 'user@example.com', password: 'Glow123!' },
+        { ipAddress: null, userAgent: null },
+      ),
+    ).resolves.toEqual(
+      expect.objectContaining({ accessToken: 'signed-access-token' }),
+    );
+
+    expect(repository.unlockExpiredLoginLock).toHaveBeenCalledWith(userId);
   });
 
   it('rejects password-reset requests with invalid emails', async () => {

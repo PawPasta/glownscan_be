@@ -26,11 +26,13 @@ import { FirebaseIdTokenVerifier } from './infrastructure/adapters/firebase-id-t
 import { SmtpEmailService } from './infrastructure/adapters/smtp-email.service.js';
 import { AuthController } from './presentation/auth.controller.js';
 import { JwtAuthGuard } from '../../shared/security/jwt-auth.guard.js';
+import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module.js';
 
 @Module({
   imports: [
     ConfigModule,
     DatabaseModule,
+    RateLimitModule,
     CloudinaryModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -47,6 +49,18 @@ import { JwtAuthGuard } from '../../shared/security/jwt-auth.guard.js';
           signOptions: {
             expiresIn: Number(
               config.get<string>('GLOWNSCAN_ACCESS_TOKEN_TTL_SECONDS', '900'),
+            ),
+            issuer: config.get<string>('GLOWNSCAN_JWT_ISSUER', 'glownscan-api'),
+            audience: config.get<string>(
+              'GLOWNSCAN_JWT_AUDIENCE',
+              'glownscan-client',
+            ),
+          },
+          verifyOptions: {
+            issuer: config.get<string>('GLOWNSCAN_JWT_ISSUER', 'glownscan-api'),
+            audience: config.get<string>(
+              'GLOWNSCAN_JWT_AUDIENCE',
+              'glownscan-client',
             ),
           },
         };

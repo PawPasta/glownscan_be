@@ -16,11 +16,15 @@ describe('AppController (e2e)', () => {
     await app.init();
   });
 
-  it('/ (GET)', () => {
-    return request(app.getHttpServer())
-      .get('/')
+  it('reports live and ready only after the test database is reachable', async () => {
+    await request(app.getHttpServer())
+      .get('/health/live')
       .expect(200)
-      .expect('Hello World!');
+      .expect({ status: 'ok' });
+    await request(app.getHttpServer())
+      .get('/health/ready')
+      .expect(200)
+      .expect({ status: 'ok', database: 'connected' });
   });
 
   afterEach(async () => {

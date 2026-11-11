@@ -79,18 +79,14 @@ describe('GeminiGenerativeModelAdapter', () => {
   });
 
   it('uses the configured API base URL', async () => {
-    const fetch = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            candidates: [
-              { content: { parts: [{ text: '{"ok":true}' }] } },
-            ],
-          }),
-          { status: 200 },
-        ),
-      );
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: '{"ok":true}' }] } }],
+        }),
+        { status: 200 },
+      ),
+    );
     const adapter = new GeminiGenerativeModelAdapter(
       new ConfigService({
         GLOWNSCAN_GEMINI_API_KEY: 'test-key',

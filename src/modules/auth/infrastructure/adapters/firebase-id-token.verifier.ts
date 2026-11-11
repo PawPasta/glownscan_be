@@ -1,9 +1,5 @@
 import { getApps, initializeApp } from 'firebase-admin/app';
-import {
-  FirebaseAuthError,
-  getAuth,
-  type Auth,
-} from 'firebase-admin/auth';
+import { FirebaseAuthError, getAuth, type Auth } from 'firebase-admin/auth';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
@@ -25,7 +21,9 @@ export class FirebaseIdTokenVerifier implements FirebaseIdTokenVerifierPort {
   private readonly auth: Auth;
 
   constructor(config: ConfigService) {
-    const projectId = config.getOrThrow<string>('GLOWNSCAN_FIREBASE_PROJECT_ID');
+    const projectId = config.getOrThrow<string>(
+      'GLOWNSCAN_FIREBASE_PROJECT_ID',
+    );
     const existingApp = getApps().find((app) => app.name === firebaseAppName);
     const app = existingApp ?? initializeApp({ projectId }, firebaseAppName);
 

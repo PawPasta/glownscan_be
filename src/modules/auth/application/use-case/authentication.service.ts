@@ -225,8 +225,15 @@ export class AuthenticationService {
     if (!user) {
       throw new UnauthorizedException('Invalid email or password.');
     }
+    const expiredLoginLock =
+      user.status === UserStatus.Locked &&
+      user.lockedUntil !== null &&
+      user.lockedUntil <= new Date();
     if (user.status === UserStatus.Locked) {
-      throw new ForbiddenException('This account is temporarily locked.');
+      if (!user.lockedUntil || user.lockedUntil > new Date()) {
+        throw new UnauthorizedException('Invalid email or password.');
+      }
+      await this.loginPort.unlockExpiredLoginLock(user.id);
     }
     if (
       user.passwordHash === null ||
@@ -235,7 +242,7 @@ export class AuthenticationService {
       await this.loginPort.recordFailedLogin(user.email);
       throw new UnauthorizedException('Invalid email or password.');
     }
-    if (user.status !== UserStatus.Active) {
+    if (user.status !== UserStatus.Active && !expiredLoginLock) {
       throw new ForbiddenException(
         user.status === UserStatus.PendingVerification
           ? 'Verify your email before logging in.'
@@ -274,7 +281,9 @@ export class AuthenticationService {
   ): Promise<{ accessToken: string; refreshToken: string }> {
     let identity: FirebaseIdentityClaims;
     try {
-      identity = await this.firebaseIdTokenVerifier.verifyIdToken(input.idToken);
+      identity = await this.firebaseIdTokenVerifier.verifyIdToken(
+        input.idToken,
+      );
     } catch (error) {
       if (error instanceof InvalidFirebaseIdTokenError) {
         throw new UnauthorizedException(
@@ -349,10 +358,7 @@ export class AuthenticationService {
     return this.loginWithFirebase({ ...input, fcmToken }, metadata);
   }
 
-  async refresh(input: {
-    accessToken: string;
-    refreshToken: string;
-  }): Promise<{
+  async refresh(input: { accessToken: string; refreshToken: string }): Promise<{
     accessToken: string;
     refreshToken: string;
     expiresIn: number;
@@ -388,7 +394,9 @@ export class AuthenticationService {
     return { message: 'Logged out successfully.' };
   }
 
-  async requestPasswordReset(emailAddress: string): Promise<{ message: string }> {
+  async requestPasswordReset(
+    emailAddress: string,
+  ): Promise<{ message: string }> {
     const email = parseEmail(emailAddress).value;
     const user = await this.requestPasswordResetPort.findUserByEmail(email);
     if (user) {
@@ -507,7 +515,6 @@ export class AuthenticationService {
       roles: user.roles,
     };
   }
-
 }
 
 function parsePlatform(platform?: string): 'ANDROID' | 'IOS' | 'WEBSITE' {

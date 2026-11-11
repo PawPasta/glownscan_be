@@ -1,0 +1,148 @@
+import { Injectable } from '@nestjs/common';
+import { DatabaseService } from '../../../../shared/database/database.service.js';
+import type { Uuid } from '../../../../shared/types/domain.types.js';
+import type {
+  AnalysisSessionPort,
+  PersistedAnalysisSession,
+} from '../../application/ports/analysis-session.port.js';
+import type { SkinAnalysisResult } from '../../application/types/skin-analysis-result.js';
+
+@Injectable()
+export class PostgresAnalysisSessionAdapter implements AnalysisSessionPort {
+  constructor(private readonly database: DatabaseService) {}
+  async claimSession(
+    userId: Uuid,
+    key: string,
+    fingerprint: string,
+  ): Promise<{ id: Uuid; created: boolean; fingerprint: string }> {
+    return this.database.transaction(async (client) => {
+      const inserted = await client.query<{
+        id: Uuid;
+        request_fingerprint: string;
+      }>(
+        `INSERT INTO app_skin_analysis.analysis_sessions (user_id, status, analysis_kind, idempotency_key, request_fingerprint, idempotency_expires_at)
+         VALUES ($1, 'UPLOAD_PENDING', 'INITIAL', $2, $3, CURRENT_TIMESTAMP + INTERVAL '24 hours')
+         ON CONFLICT (user_id, idempotency_key) DO NOTHING RETURNING id, request_fingerprint`,
+        [userId, key, fingerprint],
+      );
+      if (inserted.rowCount === 1)
+        return {
+          id: inserted.rows[0].id,
+          created: true,
+          fingerprint: inserted.rows[0].request_fingerprint,
+        };
+      const existing = await client.query<{
+        id: Uuid;
+        request_fingerprint: string;
+      }>(
+        `SELECT id, request_fingerprint FROM app_skin_analysis.analysis_sessions WHERE user_id = $1 AND idempotency_key = $2 FOR UPDATE`,
+        [userId, key],
+      );
+      return {
+        id: existing.rows[0].id,
+        created: false,
+        fingerprint: existing.rows[0].request_fingerprint,
+      };
+    });
+  }
+  async markRunning(sessionId: Uuid, userId: Uuid): Promise<boolean> {
+    const result = await this.database.query(
+      `UPDATE app_skin_analysis.analysis_sessions SET status = 'RUNNING', started_at = CURRENT_TIMESTAMP, attempt_count = attempt_count + 1
+       WHERE id = $1 AND user_id = $2 AND status = 'UPLOAD_PENDING'`,
+      [sessionId, userId],
+    );
+    return result.rowCount === 1;
+  }
+  async completeSession(
+    sessionId: Uuid,
+    userId: Uuid,
+    analysis: SkinAnalysisResult,
+    model: string,
+  ): Promise<boolean> {
+    return this.database.transaction(async (client) => {
+      const updated = await client.query(
+        `UPDATE app_skin_analysis.analysis_sessions
+         SET status = 'SUCCEEDED', completed_at = CURRENT_TIMESTAMP, model_version = $3,
+             prompt_version = 'skin-analysis-v1', result_schema_version = $4
+         WHERE id = $1 AND user_id = $2 AND status = 'RUNNING'`,
+        [sessionId, userId, model, analysis.schemaVersion],
+      );
+      if (updated.rowCount !== 1) return false;
+      await client.query(
+        `INSERT INTO app_skin_analysis.analysis_results (session_id, quality_accepted, quality_issues, limitations, provider_payload)
+         VALUES ($1, $2, $3::jsonb, $4::jsonb, $5::jsonb)`,
+        [
+          sessionId,
+          analysis.quality.accepted,
+          JSON.stringify(analysis.quality.issues),
+          JSON.stringify(analysis.limitations),
+          JSON.stringify(analysis),
+        ],
+      );
+      for (const [
+        displayOrder,
+        observation,
+      ] of analysis.observations.entries()) {
+        await client.query(
+          `INSERT INTO app_skin_analysis.analysis_observations
+             (session_id, observation_type, severity, confidence, visibility, note, box_2d, display_order)
+           VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)`,
+          [
+            sessionId,
+            observation.type,
+            observation.severity,
+            observation.confidence,
+            observation.visibility,
+            observation.note,
+            JSON.stringify(observation.box2d),
+            displayOrder,
+          ],
+        );
+      }
+      return true;
+    });
+  }
+  async failSession(
+    sessionId: Uuid,
+    userId: Uuid,
+    errorCode: string,
+  ): Promise<void> {
+    await this.database.query(
+      `UPDATE app_skin_analysis.analysis_sessions SET status = 'FAILED', completed_at = CURRENT_TIMESTAMP, error_code = $3, error_message = NULL
+       WHERE id = $1 AND user_id = $2 AND status IN ('UPLOAD_PENDING', 'QUEUED', 'RUNNING')`,
+      [sessionId, userId, errorCode],
+    );
+  }
+  async findSession(
+    userId: Uuid,
+    sessionId: Uuid,
+  ): Promise<PersistedAnalysisSession | null> {
+    const result = await this.database.query<PersistedAnalysisSession>(
+      this.selectSql() + ' WHERE s.user_id = $1 AND s.id = $2',
+      [userId, sessionId],
+    );
+    return result.rows[0] ?? null;
+  }
+  async listSessions(
+    userId: Uuid,
+    limit: number,
+    offset: number,
+  ): Promise<{ items: PersistedAnalysisSession[]; total: number }> {
+    const [items, count] = await Promise.all([
+      this.database.query<PersistedAnalysisSession>(
+        this.selectSql() +
+          ' WHERE s.user_id = $1 ORDER BY s.created_at DESC LIMIT $2 OFFSET $3',
+        [userId, limit, offset],
+      ),
+      this.database.query<{ total: string }>(
+        'SELECT count(*) AS total FROM app_skin_analysis.analysis_sessions WHERE user_id = $1',
+        [userId],
+      ),
+    ]);
+    return { items: items.rows, total: Number(count.rows[0].total) };
+  }
+  private selectSql(): string {
+    return `SELECT s.id, s.status, s.created_at AS "createdAt", s.completed_at AS "completedAt", s.error_code AS "errorCode", r.provider_payload AS result
+      FROM app_skin_analysis.analysis_sessions s LEFT JOIN app_skin_analysis.analysis_results r ON r.session_id = s.id`;
+  }
+}

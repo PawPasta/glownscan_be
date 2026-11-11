@@ -7,7 +7,10 @@ import {
 } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import { GlobalExceptionFilter } from '../src/shared/handler/global-exception.filter.js';
-import { ConflictException } from '../src/shared/handler/http.exceptions.js';
+import {
+  ConflictException,
+  TooManyRequestsException,
+} from '../src/shared/handler/http.exceptions.js';
 
 describe('GlobalExceptionFilter', () => {
   it('returns the common envelope and preserves HTTP exception status', () => {
@@ -58,8 +61,7 @@ describe('GlobalExceptionFilter', () => {
       expect.objectContaining({ message: 'sensitive database detail' }),
     );
     expect(loggerError).toHaveBeenCalledWith(
-      'GET /users failed with status 500.',
-      expect.any(String),
+      expect.stringContaining('"event":"http_error"'),
     );
     loggerError.mockRestore();
   });
@@ -96,5 +98,31 @@ describe('GlobalExceptionFilter', () => {
       HttpException,
     );
     expect(new ConflictException('duplicate')).toBeInstanceOf(HttpException);
+  });
+
+  it('adds Retry-After while retaining the standard 429 response envelope', () => {
+    const json = vi.fn();
+    const setHeader = vi.fn();
+    const status = vi.fn(() => ({ json }));
+    const filter = new GlobalExceptionFilter();
+    const host = {
+      switchToHttp: () => ({
+        getResponse: () => ({ status, setHeader }),
+        getRequest: () => ({ method: 'POST', url: '/skin-analysis/analyze' }),
+      }),
+    };
+
+    filter.catch(
+      new TooManyRequestsException('Try later', 30),
+      host as ArgumentsHost,
+    );
+
+    expect(setHeader).toHaveBeenCalledWith('Retry-After', '30');
+    expect(status).toHaveBeenCalledWith(HttpStatus.TOO_MANY_REQUESTS);
+    expect(json).toHaveBeenCalledWith({
+      status: 429,
+      message: 'Try later',
+      data: null,
+    });
   });
 });

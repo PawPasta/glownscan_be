@@ -33,6 +33,8 @@ import {
 } from './auth.dto.js';
 import { JwtAuthGuard } from '../../../shared/security/jwt-auth.guard.js';
 import { CloudinaryUploadIntentService } from '../../cloudinary/application/use-case/cloudinary-upload-intent.service.js';
+import { RateLimit } from '../../../shared/rate-limit/rate-limit.decorator.js';
+import { RateLimitGuard } from '../../../shared/rate-limit/rate-limit.guard.js';
 
 @Controller('auth')
 export class AuthController {
@@ -77,6 +79,13 @@ export class AuthController {
   }
 
   @Post('register')
+  @UseGuards(RateLimitGuard)
+  @RateLimit({
+    scope: 'auth-register',
+    key: 'IP',
+    limit: 5,
+    windowSeconds: 3600,
+  })
   register(@Body() body: RegisterDto) {
     return this.authentication.register(body);
   }
@@ -92,17 +101,21 @@ export class AuthController {
   }
 
   @Post('verify-email/resend')
-  resendVerification(
-    @Body() body: ResendVerificationDto,
-  ) {
+  @UseGuards(RateLimitGuard)
+  @RateLimit({
+    scope: 'auth-verify-email-resend',
+    key: 'IP',
+    limit: 5,
+    windowSeconds: 3600,
+  })
+  resendVerification(@Body() body: ResendVerificationDto) {
     return this.authentication.resendVerification(body.email);
   }
 
   @Post('login')
-  login(
-    @Body() body: LoginDto,
-    @Req() request: Request,
-  ) {
+  @UseGuards(RateLimitGuard)
+  @RateLimit({ scope: 'auth-login', key: 'IP', limit: 10, windowSeconds: 900 })
+  login(@Body() body: LoginDto, @Req() request: Request) {
     return this.authentication.login(body, {
       ipAddress: request.ip ?? null,
       userAgent: request.get('user-agent') ?? null,
@@ -110,10 +123,14 @@ export class AuthController {
   }
 
   @Post('mobile/login')
-  loginMobile(
-    @Body() body: MobileLoginDto,
-    @Req() request: Request,
-  ) {
+  @UseGuards(RateLimitGuard)
+  @RateLimit({
+    scope: 'auth-mobile-login',
+    key: 'IP',
+    limit: 10,
+    windowSeconds: 900,
+  })
+  loginMobile(@Body() body: MobileLoginDto, @Req() request: Request) {
     return this.authentication.loginMobile(body, {
       ipAddress: request.ip ?? null,
       userAgent: request.get('user-agent') ?? null,
@@ -121,10 +138,14 @@ export class AuthController {
   }
 
   @Post('firebase/login')
-  loginWithFirebase(
-    @Body() body: FirebaseLoginDto,
-    @Req() request: Request,
-  ) {
+  @UseGuards(RateLimitGuard)
+  @RateLimit({
+    scope: 'auth-firebase-login',
+    key: 'IP',
+    limit: 10,
+    windowSeconds: 900,
+  })
+  loginWithFirebase(@Body() body: FirebaseLoginDto, @Req() request: Request) {
     return this.authentication.loginWithFirebase(body, {
       ipAddress: request.ip ?? null,
       userAgent: request.get('user-agent') ?? null,
@@ -132,6 +153,13 @@ export class AuthController {
   }
 
   @Post('firebase/mobile/login')
+  @UseGuards(RateLimitGuard)
+  @RateLimit({
+    scope: 'auth-firebase-mobile-login',
+    key: 'IP',
+    limit: 10,
+    windowSeconds: 900,
+  })
   loginMobileWithFirebase(
     @Body() body: FirebaseMobileLoginDto,
     @Req() request: Request,
@@ -153,16 +181,26 @@ export class AuthController {
   }
 
   @Post('password/reset/request')
-  requestPasswordReset(
-    @Body() body: ResetPasswordRequestDto,
-  ) {
+  @UseGuards(RateLimitGuard)
+  @RateLimit({
+    scope: 'auth-password-reset',
+    key: 'IP',
+    limit: 5,
+    windowSeconds: 3600,
+  })
+  requestPasswordReset(@Body() body: ResetPasswordRequestDto) {
     return this.authentication.requestPasswordReset(body.email);
   }
 
   @Post('password/reset/resend')
-  resendPasswordReset(
-    @Body() body: ResetPasswordRequestDto,
-  ) {
+  @UseGuards(RateLimitGuard)
+  @RateLimit({
+    scope: 'auth-password-reset-resend',
+    key: 'IP',
+    limit: 5,
+    windowSeconds: 3600,
+  })
+  resendPasswordReset(@Body() body: ResetPasswordRequestDto) {
     return this.authentication.requestPasswordReset(body.email);
   }
 

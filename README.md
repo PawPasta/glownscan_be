@@ -85,9 +85,43 @@ The curated catalog is intended to supply product recommendations to users. Purc
 Project documentation is organized in the [`docs/`](docs/) folder:
 
 - [`architecture/`](docs/architecture/) — backend architecture and source-code responsibilities. See [Backend code structure](docs/architecture/CODE_STRUCTURE.md).
+- [`business/`](docs/business/) — current business workflows for [authentication](docs/business/Authentication.md), [profiles](docs/business/Profile.md), [image uploads](docs/business/Upload-Image.md), and [skin analysis](docs/business/Skin-Analysis.md).
 - [`aws/`](docs/aws/) — AWS deployment setup and operations, including EC2, Docker, GitHub Actions, and troubleshooting.
 - [`diagram/`](docs/diagram/) — visual references for screen flows, use cases, and user requirements.
 - [`git/`](docs/git/) — repository contribution conventions, including [commit message rules](docs/git/COMMIT.md).
+
+## Runtime architecture
+
+```text
+Flutter -> NestJS controller -> application service -> port -> adapter
+                              |                    |       |- PostgreSQL
+                              |                    |       |- Cloudinary
+                              |                    |       `- Gemini
+                              `-> authenticated user / ownership boundary
+```
+
+The API is a modular monolith with PostgreSQL as the transactional source of
+truth. Architectural decisions, including the choice of `pg`, privacy, retry,
+idempotency, and forward-only schema deployment, are in [`docs/adr`](docs/adr).
+
+### Analysis sequence
+
+```text
+client -> upload intent -> Cloudinary direct upload -> confirm/analyze API
+       -> ownership + quota + idempotency -> verified image download
+       -> Gemini -> result validator -> transactional result persistence
+       -> status/history API
+```
+
+Use `Idempotency-Key` on analysis creation. Do not send access tokens,
+Cloudinary URLs, image bytes, or provider responses to logs.
+
+## Local setup and performance tests
+
+Copy `.env.example` to `.env.local`, provide non-placeholder values, run
+`npm ci`, `npm run db:migrate`, then `npm run start:dev`. Load-test instructions
+are in [load-tests/README.md](load-tests/README.md); they are restricted to
+non-production environments and deliberately do not invoke AI.
 
 ## Profile API
 
@@ -154,6 +188,33 @@ Highlights can be used by the mobile app to draw emphasis markers on the
 original image. Scores are visual estimates, not medical diagnoses or
 instrument measurements. The client should obtain the user's consent before
 uploading or analyzing a facial image.
+
+## AI analysis abuse and cost controls
+
+Skin-analysis upload intents and analysis requests require a valid access token
+and are rate limited per authenticated user (10 upload intents/minute and 5
+analysis requests/minute). Analysis reservations are persisted atomically in
+PostgreSQL before Cloudinary confirmation or a Gemini call. This prevents a
+user from exceeding its daily quota or concurrent-analysis limit even when the
+API runs on multiple instances. A rejected request returns the standard 429
+response envelope and, where applicable, a `Retry-After` response header.
+
+Configure these limits in the application environment:
+
+```text
+GLOWNSCAN_ANALYSIS_DAILY_QUOTA_FREE=3
+GLOWNSCAN_ANALYSIS_DAILY_QUOTA_PREMIUM=30
+GLOWNSCAN_ANALYSIS_MAX_CONCURRENT_PER_USER=1
+GLOWNSCAN_ANALYSIS_MAX_CONCURRENT_GLOBAL=10
+GLOWNSCAN_ANALYSIS_RESERVATION_TTL_SECONDS=180
+```
+
+New accounts use the free quota. Future subscription processing can create or
+update `app_skin_analysis.user_analysis_entitlements` with `plan = 'PREMIUM'`
+or a user-specific `daily_quota`; usage is tracked in
+`daily_analysis_usage`. A Gemini attempt consumes a reserved daily credit even
+if its returned payload is invalid, while failures before the provider call
+release the credit.
 
 ## Mobile authentication API
 
@@ -298,10 +359,20 @@ The initial migration sequence is:
 | V002    | Seed auth roles, permissions, and role-permission mappings                               |
 | V003    | Cloudinary upload intents                                                                |
 | V004    | Skin analysis schema                                                                     |
+| V005    | Rate-limit and analysis quota schema                                                     |
+| V006    | Internal wallets, SePay payment orders/events, ledger, and PREMIUM subscriptions         |
 
-Add a new `V<number>__description.sql` file for future changes; do not edit a migration after it has been applied. The runner detects missing or modified applied migrations and stops with an error. The current V001–V004 set requires a clean schema. `npm run db:migrate:reset` drops the application schemas (`app_auth`, `app_cloudinary`, `app_skin_analysis`), the legacy `app_profile` schema, and `public.schema_migrations`, then reapplies all migrations. It does not drop unrelated schemas, but is destructive and has no confirmation guard; verify `GLOWNSCAN_DATABASE_URL` and use only for demo/development data. Never run it against production or a database whose data must be retained. If the old combined SQL script was already run, do not apply these migrations blindly; back up and baseline that database deliberately.
+Add a new `V<number>__description.sql` file for future changes; do not edit a migration after it has been applied. The runner detects missing or modified applied migrations and stops with an error. The current V001–V006 set requires a clean schema. `npm run db:migrate:reset` drops the application schemas (`app_auth`, `app_cloudinary`, `app_skin_analysis`, `app_billing`), the legacy `app_profile` schema, and `public.schema_migrations`, then reapplies all migrations. It does not drop unrelated schemas, but is destructive and has no confirmation guard; verify `GLOWNSCAN_DATABASE_URL` and use only for demo/development data. Never run it against production or a database whose data must be retained. If the old combined SQL script was already run, do not apply these migrations blindly; back up and baseline that database deliberately.
 
 The migration role should be separate from the application's runtime credentials. The schemas enable row-level security and revoke access from `PUBLIC`; configure the required database grants and RLS policies for the runtime role as part of application integration.
+
+### SePay, wallet, and PREMIUM payments
+
+`PREMIUM` is the only paid entitlement; “VIP” is merely a UI label, not a second plan. Packages are `PREMIUM_MONTHLY` (45,000 VND / 30 days), `PREMIUM_QUARTERLY` (120,000 VND / 90 days), and `PREMIUM_YEARLY` (500,000 VND / 365 days).
+
+Set the SePay secret and bank-account settings in `.env.local`. The existing deployment spelling `GLOWNSCAN_ADMIN_EMAI` is supported, with `GLOWNSCAN_ADMIN_EMAIL` as fallback. Authenticated clients create QR-backed top-ups at `POST /payment/top-ups`, or fixed-price package checkouts at `POST /payment/premium-checkouts`; both return a VietQR image URL and a payment code. Clients poll `GET /payment/orders/:orderId`, read their wallet and ledger under `/payment/wallet`, and may cancel their own pending order with a reason. An ADMIN can issue an internal-wallet refund with a reason at `POST /payment/admin/orders/:orderId/refund`.
+
+SePay calls `POST /payment/webhook`. The endpoint verifies the five-minute `X-SePay-Timestamp` and HMAC-SHA256 `X-SePay-Signature` over the raw body, and deduplicates the SePay transaction ID. One database transaction credits the customer wallet and administrator collection ledger; for a PREMIUM checkout it immediately pays from that wallet, credits the administrator sale ledger, creates or extends the subscription, and applies the existing `PREMIUM` entitlement. Refunds debit the administrator wallet and credit the customer wallet only—no external bank transfer is initiated.
 
 ### Auth configuration and admin bootstrap
 

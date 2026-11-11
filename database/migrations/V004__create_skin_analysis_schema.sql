@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS app_skin_analysis.analysis_sessions (
     result_schema_version VARCHAR(100),
     rules_version VARCHAR(100),
     idempotency_key VARCHAR(255),
+    request_fingerprint CHAR(64),
+    idempotency_expires_at TIMESTAMPTZ,
     attempt_count INTEGER NOT NULL DEFAULT 0,
     next_attempt_at TIMESTAMPTZ,
     started_at TIMESTAMPTZ,
@@ -45,7 +47,9 @@ CREATE TABLE IF NOT EXISTS app_skin_analysis.analysis_sessions (
         (error_code IS NULL AND error_message IS NULL) OR status IN ('FAILED', 'REJECTED')
     ),
     CONSTRAINT ck_analysis_sessions_idempotency CHECK (
-        idempotency_key IS NULL OR btrim(idempotency_key) <> ''
+        (idempotency_key IS NULL AND request_fingerprint IS NULL AND idempotency_expires_at IS NULL)
+        OR (idempotency_key IS NOT NULL AND btrim(idempotency_key) <> ''
+            AND request_fingerprint ~ '^[0-9a-f]{64}$' AND idempotency_expires_at > created_at)
     ),
     CONSTRAINT uq_analysis_sessions_user_idempotency UNIQUE (user_id, idempotency_key)
 );
@@ -54,6 +58,9 @@ CREATE INDEX IF NOT EXISTS ix_analysis_sessions_user_created
 CREATE INDEX IF NOT EXISTS ix_analysis_sessions_status_next_attempt
     ON app_skin_analysis.analysis_sessions(status, next_attempt_at)
     WHERE status IN ('QUEUED', 'RUNNING');
+CREATE INDEX IF NOT EXISTS ix_analysis_sessions_idempotency_expiry
+    ON app_skin_analysis.analysis_sessions(idempotency_expires_at)
+    WHERE idempotency_key IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS ux_analysis_sessions_provider_task
     ON app_skin_analysis.analysis_sessions(provider, provider_task_id)
     WHERE provider_task_id IS NOT NULL;

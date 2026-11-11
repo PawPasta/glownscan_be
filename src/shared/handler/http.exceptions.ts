@@ -42,3 +42,12 @@ export class UnprocessableEntityException extends HttpException {
     super(message, HttpStatus.UNPROCESSABLE_ENTITY, options);
   }
 }
+
+export class TooManyRequestsException extends HttpException {
+  constructor(
+    message = 'Too many requests',
+    readonly retryAfterSeconds?: number,
+  ) {
+    super(message, HttpStatus.TOO_MANY_REQUESTS);
+  }
+}

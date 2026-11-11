@@ -77,6 +77,7 @@ export interface ResendVerificationPort {
 
 export interface LoginPort {
   findUserByEmail(email: string): Promise<AuthUserRecord | null>;
+  unlockExpiredLoginLock(userId: Uuid): Promise<void>;
   recordFailedLogin(email: string): Promise<void>;
   clearFailedLogins(userId: Uuid): Promise<void>;
   createRefreshSession(data: RefreshSessionData): Promise<void>;
@@ -176,7 +177,5 @@ export const REQUEST_PASSWORD_RESET_PORT = Symbol(
 );
 export const RESET_PASSWORD_PORT = Symbol('RESET_PASSWORD_PORT');
 export const CHANGE_PASSWORD_PORT = Symbol('CHANGE_PASSWORD_PORT');
-export const VALIDATE_ACCESS_TOKEN_PORT = Symbol(
-  'VALIDATE_ACCESS_TOKEN_PORT',
-);
+export const VALIDATE_ACCESS_TOKEN_PORT = Symbol('VALIDATE_ACCESS_TOKEN_PORT');
 export const USER_PROFILE_PORT = Symbol('USER_PROFILE_PORT');

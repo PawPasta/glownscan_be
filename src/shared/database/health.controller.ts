@@ -5,10 +5,20 @@ import { DatabaseService } from './database.service.js';
 export class HealthController {
   constructor(private readonly database: DatabaseService) {}
 
-  @Get('database')
+  @Get('live')
+  live(): { status: 'ok' } {
+    return { status: 'ok' };
+  }
+
+  @Get(['ready', 'database'])
   async checkDatabase(): Promise<{ status: 'ok'; database: 'connected' }> {
     try {
-      await this.database.query('SELECT 1');
+      await Promise.race([
+        this.database.query('SELECT 1'),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Readiness timed out.')), 3_000),
+        ),
+      ]);
       return { status: 'ok', database: 'connected' };
     } catch (error) {
       throw new ServiceUnavailableException(
