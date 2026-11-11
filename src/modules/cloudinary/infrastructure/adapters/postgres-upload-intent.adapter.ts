@@ -87,7 +87,9 @@ export class PostgresUploadIntentAdapter implements UploadIntentPort {
         [userId, secureUrl],
       );
       if (updatedUser.rowCount !== 1) {
-        throw new Error('Avatar could not be saved for the authenticated user.');
+        throw new Error(
+          'Avatar could not be saved for the authenticated user.',
+        );
       }
       return true;
     });

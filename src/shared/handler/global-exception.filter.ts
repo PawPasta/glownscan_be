@@ -8,6 +8,8 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import type { ApiResponse } from '../api/api-response.ts';
+import { TooManyRequestsException } from './http.exceptions.js';
+import type { RequestWithContext } from '../observability/request-context.js';
 
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
@@ -16,7 +18,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost): void {
     const context = host.switchToHttp();
     const response = context.getResponse<Response>();
-    const request = context.getRequest<Request>();
+    const request = context.getRequest<RequestWithContext>();
     const status =
       exception instanceof HttpException
         ? exception.getStatus()
@@ -30,8 +32,20 @@ export class GlobalExceptionFilter implements ExceptionFilter {
 
     if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
       this.logger.error(
-        `${request.method} ${request.url} failed with status ${status}.`,
-        exception instanceof Error ? exception.stack : undefined,
+        JSON.stringify({
+          timestamp: new Date().toISOString(),
+          level: 'error',
+          service: 'glownscan-api',
+          event: 'http_error',
+          requestId: request.requestId,
+          method: request.method,
+          path: request.path,
+          statusCode: status,
+          durationMs: request.startedAt
+            ? Math.round(performance.now() - request.startedAt)
+            : undefined,
+          errorCode: exception instanceof Error ? exception.name : 'UNEXPECTED',
+        }),
       );
     }
 
@@ -40,6 +54,12 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       message,
       data: null,
     };
+    if (
+      exception instanceof TooManyRequestsException &&
+      exception.retryAfterSeconds
+    ) {
+      response.setHeader('Retry-After', String(exception.retryAfterSeconds));
+    }
     response.status(status).json(body);
   }
 

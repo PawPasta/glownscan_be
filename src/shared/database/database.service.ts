@@ -25,7 +25,30 @@ export class DatabaseService implements OnModuleInit, OnApplicationShutdown {
       throw new Error('GLOWNSCAN_DATABASE_URL is required.');
     }
 
-    this.pool = new Pool({ connectionString });
+    this.pool = new Pool({
+      connectionString,
+      max: positiveInt(config, 'GLOWNSCAN_DATABASE_POOL_MAX', 10),
+      idleTimeoutMillis: positiveInt(
+        config,
+        'GLOWNSCAN_DATABASE_IDLE_TIMEOUT_MS',
+        30_000,
+      ),
+      connectionTimeoutMillis: positiveInt(
+        config,
+        'GLOWNSCAN_DATABASE_CONNECT_TIMEOUT_MS',
+        5_000,
+      ),
+      query_timeout: positiveInt(
+        config,
+        'GLOWNSCAN_DATABASE_QUERY_TIMEOUT_MS',
+        15_000,
+      ),
+      statement_timeout: positiveInt(
+        config,
+        'GLOWNSCAN_DATABASE_STATEMENT_TIMEOUT_MS',
+        15_000,
+      ),
+    });
     this.pool.on('error', (error: Error) => {
       this.logger.error('Unexpected PostgreSQL pool error.', error.stack);
     });
@@ -81,4 +104,15 @@ export class DatabaseService implements OnModuleInit, OnApplicationShutdown {
   async onApplicationShutdown(): Promise<void> {
     await this.pool.end();
   }
+}
+
+function positiveInt(
+  config: ConfigService,
+  key: string,
+  fallback: number,
+): number {
+  const value = Number(config.get<string>(key, String(fallback)));
+  if (!Number.isInteger(value) || value < 1)
+    throw new Error(`${key} must be a positive integer.`);
+  return value;
 }

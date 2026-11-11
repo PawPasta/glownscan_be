@@ -38,7 +38,7 @@ describe('database migrations', () => {
     expect(auth?.sql).toContain('date_of_birth DATE');
     expect(auth?.sql).toContain('gender VARCHAR(30)');
     expect(migrations.map(({ version }) => Number(version))).toEqual([
-      1, 2, 3, 4,
+      1, 2, 3, 4, 5,
     ]);
     expect(
       migrations.some(({ sql }) =>
@@ -60,6 +60,9 @@ describe('database migrations', () => {
     );
     expect(query).toHaveBeenCalledWith(
       'DROP SCHEMA IF EXISTS app_skin_analysis CASCADE',
+    );
+    expect(query).toHaveBeenCalledWith(
+      'DROP SCHEMA IF EXISTS app_security CASCADE',
     );
     expect(query).toHaveBeenCalledWith(
       'DROP SCHEMA IF EXISTS app_cloudinary CASCADE',

@@ -18,11 +18,7 @@ export type SkinAnalysisObservationType =
   | 'VISIBLE_OILINESS'
   | 'UNEAVEN_TEXTURE';
 
-export type SkinAnalysisSkinType =
-  | 'NORMAL'
-  | 'DRY'
-  | 'OILY'
-  | 'COMBINATION';
+export type SkinAnalysisSkinType = 'NORMAL' | 'DRY' | 'OILY' | 'COMBINATION';
 
 export type SkinAnalysisSensitivityLevel = 'LOW' | 'MEDIUM' | 'HIGH';
 

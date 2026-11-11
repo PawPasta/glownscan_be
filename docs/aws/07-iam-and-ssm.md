@@ -48,10 +48,11 @@ and Systems Manager registration.
 
 ## C. GitHub Actions IAM user
 
-The current setup uses an IAM user with an access key stored in GitHub
-Secrets. This is operational but a long-lived access key must be
-protected and rotated. Prefer GitHub OIDC with an IAM role when it is
-available and configured.
+GitHub Actions authenticates with GitHub OIDC and an IAM role; it does not use
+long-lived AWS access keys. Create an IAM OIDC provider for
+`token.actions.githubusercontent.com`, restrict the role trust policy to this
+repository and the `main` branch, then set `AWS_DEPLOY_ROLE_ARN` as a GitHub
+repository variable. The workflow requires the `id-token: write` permission.
 
 The custom policy should permit only the deployment operations required.
 A baseline policy for this exact instance is:

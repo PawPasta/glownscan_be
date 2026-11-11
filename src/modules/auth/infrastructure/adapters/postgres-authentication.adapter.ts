@@ -70,7 +70,9 @@ export class PostgresAuthenticationAdapter
       [userId],
     );
     if (!rows[0]) {
-      throw new Error('Profile could not be loaded for the authenticated user.');
+      throw new Error(
+        'Profile could not be loaded for the authenticated user.',
+      );
     }
     return rows[0];
   }
@@ -222,10 +224,7 @@ export class PostgresAuthenticationAdapter
       if (!user) {
         throw new FirebaseAccountConflictError();
       }
-      if (
-        user.status !== 'ACTIVE' &&
-        user.status !== 'PENDING_VERIFICATION'
-      ) {
+      if (user.status !== 'ACTIVE' && user.status !== 'PENDING_VERIFICATION') {
         return user;
       }
 
@@ -307,6 +306,16 @@ export class PostgresAuthenticationAdapter
            END
        WHERE email = $1 AND status = 'ACTIVE' AND deleted_at IS NULL`,
       [email],
+    );
+  }
+
+  async unlockExpiredLoginLock(userId: string): Promise<void> {
+    await this.database.query(
+      `UPDATE app_auth.users
+       SET status = 'ACTIVE', failed_login_count = 0, locked_until = NULL
+       WHERE id = $1 AND status = 'LOCKED'
+         AND locked_until IS NOT NULL AND locked_until <= CURRENT_TIMESTAMP`,
+      [userId],
     );
   }
 

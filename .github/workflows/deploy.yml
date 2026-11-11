@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 concurrency:
   group: glownscan-${{ github.workflow }}-${{ github.ref }}
@@ -18,8 +19,37 @@ concurrency:
 
 jobs:
   ci:
-    name: Lint, Test and Build
+    name: Quality gates
     runs-on: ubuntu-latest
+    env:
+      GLOWNSCAN_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/glownscan_test
+      GLOWNSCAN_JWT_ACCESS_SECRET: ci-only-jwt-secret-that-is-longer-than-32-characters
+      GLOWNSCAN_JWT_ISSUER: glownscan-api-ci
+      GLOWNSCAN_JWT_AUDIENCE: glownscan-client-ci
+      GLOWNSCAN_SMTP_HOST: localhost
+      GLOWNSCAN_SMTP_USER: ci-user
+      GLOWNSCAN_SMTP_PASSWORD: ci-password
+      GLOWNSCAN_SMTP_FROM: noreply@example.test
+      GLOWNSCAN_FRONTEND_URL: http://localhost:5173
+      GLOWNSCAN_FIREBASE_PROJECT_ID: glownscan-ci
+      GLOWNSCAN_CLOUDINARY_CLOUD_NAME: ci-cloud
+      GLOWNSCAN_CLOUDINARY_API_KEY: ci-key
+      GLOWNSCAN_CLOUDINARY_API_SECRET: ci-secret
+      GLOWNSCAN_GEMINI_API_KEY: ci-gemini-key
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: glownscan_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d glownscan_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
       - name: Checkout source
@@ -34,11 +64,44 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check formatting
+        run: npx prettier --check "src/**/*.ts" "test/**/*.ts" "scripts/**/*.mjs"
+
       - name: Lint
         run: npm run lint
 
+      - name: Type check
+        run: npx tsc --noEmit --project tsconfig.build.json
+
       - name: Run unit tests
         run: npm test
+
+      - name: Run unit-test coverage
+        run: npm run test:cov
+
+      - name: Check critical business coverage
+        run: npm run test:coverage:critical
+
+      - name: Save coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          if-no-files-found: error
+
+      - name: Apply test database schema
+        run: npm run db:migrate
+
+      - name: Run E2E tests
+        run: npm run test:e2e
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Scan for committed secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build application
         run: npm run build
@@ -138,8 +201,8 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: glownscan-github-deploy
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: Verify EC2 is managed by SSM
@@ -185,6 +248,12 @@ jobs:
           fi
 
           docker pull "$NEW_IMAGE"
+
+          # Migrations are forward-only expand changes. Do not attempt schema
+          # rollback when rolling the application image back.
+          docker run --rm \
+            --env-file /opt/glownscan/.env \
+            "$NEW_IMAGE" node database/migrate.js up
 
           rollback() {
             echo "Deployment failed; attempting rollback."

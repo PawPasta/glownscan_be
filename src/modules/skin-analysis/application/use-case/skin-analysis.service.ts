@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { UnprocessableEntityException } from '../../../../shared/handler/http.exceptions.js';
+import { NotFoundException } from '../../../../shared/handler/http.exceptions.js';
 import type { Uuid } from '../../../../shared/types/domain.types.js';
 import {
   CloudinaryUploadIntentService,
@@ -11,10 +11,26 @@ import {
 } from '../ports/gemini-generative-model.port.js';
 import { SKIN_ANALYSIS_PROMPT } from '../prompts/skin-analysis.prompt.js';
 import type { SkinAnalysisResult } from '../types/skin-analysis-result.js';
-
-const CLOUDINARY_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
-const CLOUDINARY_FETCH_TIMEOUT_MS = 30_000;
-const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+import { parseSkinAnalysisResult as validateSkinAnalysisResult } from '../validators/skin-analysis-result.validator.js';
+import {
+  ANALYSIS_QUOTA_PORT,
+  type AnalysisQuotaPort,
+} from '../ports/analysis-quota.port.js';
+import { TooManyRequestsException } from '../../../../shared/handler/http.exceptions.js';
+import {
+  ANALYSIS_SESSION_PORT,
+  type AnalysisSessionPort,
+} from '../ports/analysis-session.port.js';
+import { createHash, randomUUID } from 'node:crypto';
+import {
+  BadRequestException,
+  ConflictException,
+  UnprocessableEntityException,
+} from '../../../../shared/handler/http.exceptions.js';
+import {
+  IMAGE_DOWNLOADER_PORT,
+  type ImageDownloaderPort,
+} from '../ports/image-downloader.port.js';
 
 @Injectable()
 export class SkinAnalysisService {
@@ -22,6 +38,11 @@ export class SkinAnalysisService {
     @Inject(GEMINI_GENERATIVE_MODEL_PORT)
     private readonly gemini: GeminiGenerativeModelPort,
     private readonly cloudinary: CloudinaryUploadIntentService,
+    @Inject(ANALYSIS_QUOTA_PORT) private readonly quota: AnalysisQuotaPort,
+    @Inject(ANALYSIS_SESSION_PORT)
+    private readonly sessions: AnalysisSessionPort,
+    @Inject(IMAGE_DOWNLOADER_PORT)
+    private readonly imageDownloader: ImageDownloaderPort,
   ) {}
 
   async createUploadIntent(userId: Uuid): Promise<{
@@ -37,260 +58,104 @@ export class SkinAnalysisService {
   async analyzeCloudinaryImage(
     userId: Uuid,
     confirmation: CloudinaryUploadConfirmation,
-  ): Promise<SkinAnalysisResult> {
-    const secureUrl = await this.cloudinary.confirmSkinAnalysisUpload(
-      userId,
-      confirmation,
-    );
-    const image = await this.downloadImage(secureUrl);
-    const generated = await this.gemini.generateContent({
-      prompt: SKIN_ANALYSIS_PROMPT,
-      image,
-    });
-
-    return parseSkinAnalysisResult(generated.text);
-  }
-
-  private async downloadImage(
-    secureUrl: string,
-  ): Promise<{ mimeType: string; data: Uint8Array }> {
-    const response = await fetch(secureUrl, {
-      method: 'GET',
-      redirect: 'error',
-      signal: AbortSignal.timeout(CLOUDINARY_FETCH_TIMEOUT_MS),
-    });
-    if (!response.ok) {
-      throw new UnprocessableEntityException(
-        `Cloudinary image download failed with HTTP ${response.status}.`,
+    idempotencyKey?: string,
+  ): Promise<SkinAnalysisResult & { sessionId: Uuid; status: 'SUCCEEDED' }> {
+    if (idempotencyKey !== undefined && idempotencyKey.length > 255)
+      throw new BadRequestException(
+        'Idempotency-Key must not exceed 255 characters.',
       );
-    }
-
-    const mimeType = response.headers
-      .get('content-type')
-      ?.split(';', 1)[0]
-      ?.trim()
-      .toLowerCase();
-    if (!mimeType || !ALLOWED_IMAGE_TYPES.has(mimeType)) {
-      throw new UnprocessableEntityException(
-        'The Cloudinary resource must be a JPEG, PNG, or WebP image.',
+    const key = idempotencyKey ?? randomUUID();
+    const fingerprint = createHash('sha256')
+      .update(JSON.stringify(confirmation))
+      .digest('hex');
+    const claimed = await this.sessions.claimSession(userId, key, fingerprint);
+    if (claimed.fingerprint !== fingerprint)
+      throw new ConflictException(
+        'Idempotency-Key was used with a different payload.',
       );
-    }
-
-    const contentLength = Number(response.headers.get('content-length'));
-    if (
-      Number.isFinite(contentLength) &&
-      contentLength > CLOUDINARY_IMAGE_MAX_BYTES
-    ) {
-      throw new UnprocessableEntityException(
-        'The image must be 10 MB or smaller.',
-      );
-    }
-    if (!response.body) {
-      throw new UnprocessableEntityException(
-        'Cloudinary returned an empty image.',
-      );
-    }
-
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let totalBytes = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        break;
-      }
-      totalBytes += value.byteLength;
-      if (totalBytes > CLOUDINARY_IMAGE_MAX_BYTES) {
-        await reader.cancel();
-        throw new UnprocessableEntityException(
-          'The image must be 10 MB or smaller.',
+    if (!claimed.created)
+      throw new ConflictException('Analysis is already being processed.');
+    let reservation: { id: Uuid } | null = null;
+    let providerCalled = false;
+    let sessionId: Uuid | null = claimed.id;
+    try {
+      reservation = await this.quota.reserveAnalysis(userId);
+      if (!reservation) {
+        throw new TooManyRequestsException(
+          'Your skin-analysis quota or concurrent-analysis limit has been reached. Please try again later.',
+          60,
         );
       }
-      chunks.push(value);
-    }
-
-    const data = new Uint8Array(totalBytes);
-    let offset = 0;
-    for (const chunk of chunks) {
-      data.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    if (totalBytes === 0) {
-      throw new UnprocessableEntityException(
-        'Cloudinary returned an empty image.',
+      const secureUrl = await this.cloudinary.confirmSkinAnalysisUpload(
+        userId,
+        confirmation,
       );
+      const image = await this.imageDownloader.download(secureUrl);
+      if (!(await this.sessions.markRunning(sessionId, userId))) {
+        throw new Error('Analysis session could not start.');
+      }
+      providerCalled = true;
+      const generated = await this.gemini.generateContent({
+        prompt: SKIN_ANALYSIS_PROMPT,
+        image,
+      });
+      const result = validateSkinAnalysisResult(generated.text);
+      if (
+        !(await this.persistResult(sessionId, userId, result, generated.model))
+      ) {
+        throw new Error('Analysis session could not be completed.');
+      }
+      return { ...result, sessionId, status: 'SUCCEEDED' };
+    } catch (error) {
+      if (sessionId)
+        await this.sessions.failSession(sessionId, userId, errorCode(error));
+      throw error;
+    } finally {
+      if (reservation)
+        await this.quota.finalizeAnalysis(reservation.id, providerCalled);
     }
-    return { mimeType, data };
+  }
+
+  private async persistResult(
+    sessionId: Uuid,
+    userId: Uuid,
+    result: SkinAnalysisResult,
+    model: string,
+  ): Promise<boolean> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await this.sessions.completeSession(
+          sessionId,
+          userId,
+          result,
+          model,
+        );
+      } catch (error) {
+        lastError = error;
+        if (attempt < 2)
+          await new Promise((resolve) =>
+            setTimeout(resolve, 100 * 2 ** attempt),
+          );
+      }
+    }
+    throw lastError;
+  }
+
+  async getSession(userId: Uuid, sessionId: Uuid) {
+    const session = await this.sessions.findSession(userId, sessionId);
+    if (!session)
+      throw new NotFoundException('Skin analysis session was not found.');
+    return session;
+  }
+
+  listSessions(userId: Uuid, page: number, limit: number) {
+    return this.sessions.listSessions(userId, limit, (page - 1) * limit);
   }
 }
 
-function parseSkinAnalysisResult(text: string): SkinAnalysisResult {
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    throw new UnprocessableEntityException(
-      'Gemini returned invalid JSON for the skin analysis.',
-    );
-  }
-  if (!isSkinAnalysisResult(value)) {
-    throw new UnprocessableEntityException(
-      'Gemini returned a skin analysis with an invalid structure.',
-    );
-  }
-  return value;
-}
-
-function isSkinAnalysisResult(value: unknown): value is SkinAnalysisResult {
-  if (!isRecord(value) || value.schemaVersion !== '1.0') {
-    return false;
-  }
-  const metrics = value.metrics;
-  const regions = value.regions;
-  if (
-    !isRecord(value.quality) ||
-    typeof value.quality.accepted !== 'boolean' ||
-    !isStringArray(value.quality.issues) ||
-    !isRecord(value.summary) ||
-    !isIntegerInRange(value.summary.overallSkinScore, 0, 100) ||
-    !isUnitInterval(value.summary.confidence) ||
-    !isStringArray(value.summary.notes) ||
-    !isSkinProfile(value.skinProfile) ||
-    !isRecord(metrics) ||
-    !isRecord(regions) ||
-    !Array.isArray(value.observations) ||
-    !Array.isArray(value.highlights) ||
-    !isStringArray(value.limitations)
-  ) {
-    return false;
-  }
-
-  const metricNames = [
-    'acne',
-    'redness',
-    'darkSpots',
-    'pores',
-    'dryness',
-    'oiliness',
-    'unevenTexture',
-  ] as const;
-  const regionNames = [
-    'forehead',
-    'leftCheek',
-    'rightCheek',
-    'nose',
-    'chin',
-  ] as const;
-  return (
-    metricNames.every((name) => isAssessment(metrics[name])) &&
-    regionNames.every((name) => isAssessment(regions[name])) &&
-    value.observations.every(isObservation) &&
-    value.highlights.every(isHighlight)
-  );
-}
-
-function isSkinProfile(value: unknown): boolean {
-  const skinTypes = ['NORMAL', 'DRY', 'OILY', 'COMBINATION'];
-  const sensitivityLevels = ['LOW', 'MEDIUM', 'HIGH'];
-  return (
-    isRecord(value) &&
-    (value.skinType === null ||
-      (typeof value.skinType === 'string' &&
-        skinTypes.some((skinType) => skinType === value.skinType))) &&
-    (value.sensitivityLevel === null ||
-      (typeof value.sensitivityLevel === 'string' &&
-        sensitivityLevels.some(
-          (level) => level === value.sensitivityLevel,
-        ))) &&
-    (value.notes === null || typeof value.notes === 'string')
-  );
-}
-
-function isAssessment(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    isIntegerInRange(value.score, 0, 100) &&
-    isUnitInterval(value.confidence) &&
-    isVisibility(value.visibility)
-  );
-}
-
-function isObservation(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    [
-      'VISIBLE_ACNE',
-      'VISIBLE_REDNESS',
-      'VISIBLE_DARK_SPOTS',
-      'VISIBLE_PORES',
-      'VISIBLE_DRYNESS',
-      'VISIBLE_OILINESS',
-      'UNEAVEN_TEXTURE',
-    ].includes(String(value.type)) &&
-    isIntegerInRange(value.severity, 0, 4) &&
-    isUnitInterval(value.confidence) &&
-    isVisibility(value.visibility) &&
-    (value.note === null || typeof value.note === 'string') &&
-    Array.isArray(value.box2d) &&
-    value.box2d.length === 4 &&
-    value.box2d.every((coordinate) => isIntegerInRange(coordinate, 0, 1000))
-  );
-}
-
-function isHighlight(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    [
-      'acne',
-      'redness',
-      'darkSpots',
-      'pores',
-      'dryness',
-      'oiliness',
-      'unevenTexture',
-    ].includes(String(value.type)) &&
-    typeof value.label === 'string' &&
-    value.label.length > 0 &&
-    isIntegerInRange(value.x, 0, 1000) &&
-    isIntegerInRange(value.y, 0, 1000) &&
-    isIntegerInRange(value.radius, 1, 1000) &&
-    isIntegerInRange(value.severity, 0, 4) &&
-    isUnitInterval(value.confidence)
-  );
-}
-
-function isVisibility(value: unknown): boolean {
-  return ['CLEAR', 'UNCERTAIN', 'NOT_VISIBLE'].includes(String(value));
-}
-
-function isIntegerInRange(
-  value: unknown,
-  minimum: number,
-  maximum: number,
-): value is number {
-  return (
-    typeof value === 'number' &&
-    Number.isInteger(value) &&
-    value >= minimum &&
-    value <= maximum
-  );
-}
-
-function isUnitInterval(value: unknown): value is number {
-  return (
-    typeof value === 'number' &&
-    Number.isFinite(value) &&
-    value >= 0 &&
-    value <= 1
-  );
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return (
-    Array.isArray(value) && value.every((item) => typeof item === 'string')
-  );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
+function errorCode(error: unknown): string {
+  if (error instanceof UnprocessableEntityException)
+    return 'ANALYSIS_INPUT_OR_PROVIDER_RESPONSE_INVALID';
+  return 'ANALYSIS_PROCESSING_FAILED';
 }

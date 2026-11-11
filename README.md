@@ -85,9 +85,43 @@ The curated catalog is intended to supply product recommendations to users. Purc
 Project documentation is organized in the [`docs/`](docs/) folder:
 
 - [`architecture/`](docs/architecture/) — backend architecture and source-code responsibilities. See [Backend code structure](docs/architecture/CODE_STRUCTURE.md).
+- [`business/`](docs/business/) — current business workflows for [authentication](docs/business/Authentication.md), [profiles](docs/business/Profile.md), [image uploads](docs/business/Upload-Image.md), and [skin analysis](docs/business/Skin-Analysis.md).
 - [`aws/`](docs/aws/) — AWS deployment setup and operations, including EC2, Docker, GitHub Actions, and troubleshooting.
 - [`diagram/`](docs/diagram/) — visual references for screen flows, use cases, and user requirements.
 - [`git/`](docs/git/) — repository contribution conventions, including [commit message rules](docs/git/COMMIT.md).
+
+## Runtime architecture
+
+```text
+Flutter -> NestJS controller -> application service -> port -> adapter
+                              |                    |       |- PostgreSQL
+                              |                    |       |- Cloudinary
+                              |                    |       `- Gemini
+                              `-> authenticated user / ownership boundary
+```
+
+The API is a modular monolith with PostgreSQL as the transactional source of
+truth. Architectural decisions, including the choice of `pg`, privacy, retry,
+idempotency, and forward-only schema deployment, are in [`docs/adr`](docs/adr).
+
+### Analysis sequence
+
+```text
+client -> upload intent -> Cloudinary direct upload -> confirm/analyze API
+       -> ownership + quota + idempotency -> verified image download
+       -> Gemini -> result validator -> transactional result persistence
+       -> status/history API
+```
+
+Use `Idempotency-Key` on analysis creation. Do not send access tokens,
+Cloudinary URLs, image bytes, or provider responses to logs.
+
+## Local setup and performance tests
+
+Copy `.env.example` to `.env.local`, provide non-placeholder values, run
+`npm ci`, `npm run db:migrate`, then `npm run start:dev`. Load-test instructions
+are in [load-tests/README.md](load-tests/README.md); they are restricted to
+non-production environments and deliberately do not invoke AI.
 
 ## Profile API
 
@@ -154,6 +188,33 @@ Highlights can be used by the mobile app to draw emphasis markers on the
 original image. Scores are visual estimates, not medical diagnoses or
 instrument measurements. The client should obtain the user's consent before
 uploading or analyzing a facial image.
+
+## AI analysis abuse and cost controls
+
+Skin-analysis upload intents and analysis requests require a valid access token
+and are rate limited per authenticated user (10 upload intents/minute and 5
+analysis requests/minute). Analysis reservations are persisted atomically in
+PostgreSQL before Cloudinary confirmation or a Gemini call. This prevents a
+user from exceeding its daily quota or concurrent-analysis limit even when the
+API runs on multiple instances. A rejected request returns the standard 429
+response envelope and, where applicable, a `Retry-After` response header.
+
+Configure these limits in the application environment:
+
+```text
+GLOWNSCAN_ANALYSIS_DAILY_QUOTA_FREE=3
+GLOWNSCAN_ANALYSIS_DAILY_QUOTA_PREMIUM=30
+GLOWNSCAN_ANALYSIS_MAX_CONCURRENT_PER_USER=1
+GLOWNSCAN_ANALYSIS_MAX_CONCURRENT_GLOBAL=10
+GLOWNSCAN_ANALYSIS_RESERVATION_TTL_SECONDS=180
+```
+
+New accounts use the free quota. Future subscription processing can create or
+update `app_skin_analysis.user_analysis_entitlements` with `plan = 'PREMIUM'`
+or a user-specific `daily_quota`; usage is tracked in
+`daily_analysis_usage`. A Gemini attempt consumes a reserved daily credit even
+if its returned payload is invalid, while failures before the provider call
+release the credit.
 
 ## Mobile authentication API
 
