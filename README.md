@@ -2,11 +2,11 @@
 
 GlowScan is a personalized skincare application. This repository contains the backend API intended to support the mobile app and admin dashboard.
 
-> **Implementation status:** The backend includes authentication, profile, and PostgreSQL integration. A first skin-analysis endpoint can send a user's Cloudinary image to Gemini and return structured visual scores and face-overlay coordinates. Persisted analysis history, routines, recommendations, subscriptions, and catalog features remain planned.
+> **Implementation status:** The backend includes authentication, profiles, a persisted skin assessment, synchronous skin analysis, PostgreSQL integration, and wallet-backed `PREMIUM` payments via SePay. Payment confirmation can notify registered mobile devices and email recipients. Routines, recommendation/catalog management, progress tracking, and background analysis workers remain planned.
 
 ## Product flows
 
-The backend is planned to support these main user journeys:
+The backend currently supports the following initial user journeys; items described as planned are not available yet.
 
 ### 1. Account setup and personalization
 
@@ -18,7 +18,8 @@ Open app
   → View personalized home
 ```
 
-Account and profile data provide the starting point for a user's skin profile and later recommendations.
+Account, profile, and the versioned skin-assessment questionnaire provide the
+starting point for a user's skin profile and later recommendations.
 
 ### 2. Skin analysis and skincare guidance
 
@@ -33,7 +34,9 @@ Capture or upload facial image
           → Show personalized guidance, routine, and product recommendations
 ```
 
-Analysis history can then be used to review results over time and compare supported skin metrics. Recommendations are intended to use the user's assessment, skin profile, and products in GlowScan's curated catalog.
+Analysis history can be used to review saved results over time. Personalized
+guidance, routines, comparisons, and product recommendations are planned and
+are not inferred or returned by the current API.
 
 ### 3. Routine and progress tracking
 
@@ -60,7 +63,11 @@ View Premium plans
   → View or manage subscription
 ```
 
-Premium capabilities are planned for advanced analysis, progress insights, and routine features. Purchase processing and verification are not implemented in this repository yet.
+`PREMIUM` is the sole paid entitlement (the UI may call it “VIP”). SePay-backed
+top-ups and package purchases are implemented. A verified payment credits the
+internal wallet and, for a package purchase, immediately pays the package and
+extends the user's `PREMIUM` subscription. The specific premium product
+capabilities remain to be defined.
 
 ### 5. Product catalog administration
 
@@ -82,6 +89,9 @@ The curated catalog is intended to supply product recommendations to users. Purc
 
 ## Documentation
 
+See [Skin assessment](docs/business/Skin-Assessment.md) for the persisted
+questionnaire, validation rules, and its two authenticated endpoints.
+
 Project documentation is organized in the [`docs/`](docs/) folder:
 
 - [`architecture/`](docs/architecture/) — backend architecture and source-code responsibilities. See [Backend code structure](docs/architecture/CODE_STRUCTURE.md).
@@ -96,13 +106,15 @@ Project documentation is organized in the [`docs/`](docs/) folder:
 Flutter -> NestJS controller -> application service -> port -> adapter
                               |                    |       |- PostgreSQL
                               |                    |       |- Cloudinary
-                              |                    |       `- Gemini
+                              |                    |       |- Gemini
+                              |                    |       |- Firebase Cloud Messaging
+                              |                    |       `- SMTP
                               `-> authenticated user / ownership boundary
 ```
 
 The API is a modular monolith with PostgreSQL as the transactional source of
-truth. Architectural decisions, including the choice of `pg`, privacy, retry,
-idempotency, and forward-only schema deployment, are in [`docs/adr`](docs/adr).
+truth. It uses `pg` directly at the infrastructure boundary and forward-only
+database migrations.
 
 ### Analysis sequence
 
@@ -115,6 +127,11 @@ client -> upload intent -> Cloudinary direct upload -> confirm/analyze API
 
 Use `Idempotency-Key` on analysis creation. Do not send access tokens,
 Cloudinary URLs, image bytes, or provider responses to logs.
+
+The current analysis path is synchronous: the HTTP request waits for Gemini and
+returns the completed result. BullMQ and Redis dependencies are installed for a
+future outbox/worker implementation, but no background analysis worker is
+wired into the request path yet.
 
 ## Local setup and performance tests
 
@@ -145,6 +162,16 @@ upload-intent table. Configure
 `GLOWNSCAN_CLOUDINARY_CLOUD_NAME`, `GLOWNSCAN_CLOUDINARY_API_KEY`, and
 `GLOWNSCAN_CLOUDINARY_API_SECRET` in the backend environment.
 
+## Skin assessment API
+
+The questionnaire is owned by the authenticated user and uses the current
+version, `skin-assessment-v1`. `GET /skin-assessments/current` returns the
+saved assessment or `null` when it has not been completed. `PUT
+/skin-assessments/current` validates and upserts the answers. Supported fields
+are `skinType`, `sensitivity`, `concerns`, and `goals`; `NONE` may be used only
+as the sole value in `concerns`. See the [skin-assessment business
+document](docs/business/Skin-Assessment.md) for request examples.
+
 ## Skin analysis API
 
 Configure `GLOWNSCAN_GEMINI_API_KEY`, optional `GLOWNSCAN_GEMINI_MODEL`
@@ -173,9 +200,10 @@ with the access token and Cloudinary's `public_id`, `version`, `signature`, and
 
 The backend verifies the Cloudinary response signature and exact URL, consumes
 the matching unexpired upload intent once, downloads the image, sends it to
-Gemini, validates the returned JSON, and returns the analysis. It does not
-analyze images based on an unverified URL. This first version does not persist
-the analysis result.
+Gemini, validates the returned JSON, and transactionally stores the session,
+result, and observations. It does not analyze images based on an unverified
+URL. Retrieve an owned result with `GET /skin-analysis/:analysisId` and paged
+history with `GET /skin-analysis/history`.
 
 The response contains a 0–100 overall visible-skin score, an estimated
 `skinProfile` (visual skin type, nullable sensitivity level, and brief notes),
@@ -209,12 +237,12 @@ GLOWNSCAN_ANALYSIS_MAX_CONCURRENT_GLOBAL=10
 GLOWNSCAN_ANALYSIS_RESERVATION_TTL_SECONDS=180
 ```
 
-New accounts use the free quota. Future subscription processing can create or
-update `app_skin_analysis.user_analysis_entitlements` with `plan = 'PREMIUM'`
-or a user-specific `daily_quota`; usage is tracked in
-`daily_analysis_usage`. A Gemini attempt consumes a reserved daily credit even
-if its returned payload is invalid, while failures before the provider call
-release the credit.
+New accounts use the free quota. A confirmed `PREMIUM` package purchase creates
+or updates `app_skin_analysis.user_analysis_entitlements` with
+`plan = 'PREMIUM'`; a user-specific `daily_quota` is also supported. Usage is
+tracked in `daily_analysis_usage`. A Gemini attempt consumes a reserved daily
+credit even if its returned payload is invalid, while failures before the
+provider call release the credit.
 
 ## Mobile authentication API
 
@@ -259,7 +287,10 @@ src/modules/auth/
 │   └── adapters/       # PostgreSQL and SMTP implementations
 └── auth.module.ts      # Nest dependency wiring
 
-src/shared/              # API, configuration, database, errors, security, types
+src/modules/skin-analysis/   # Assessments, Cloudinary verification, Gemini analysis, result persistence
+src/modules/payment/         # SePay webhook, VietQR orders, wallets, and PREMIUM entitlement
+src/modules/notification/    # FCM and email payment-confirmation delivery
+src/shared/                  # API, configuration, database, errors, security, types
 database/                # Versioned migrations and explicit admin bootstrap
 test/                    # Unit and end-to-end tests
 ```
@@ -286,7 +317,13 @@ Key application and shared files:
 
 ## Database design
 
-The migrations create schemas for authentication and user profiles (`app_auth`), shared purpose-based image upload intents (`app_cloudinary`), and skin analysis (`app_skin_analysis`), plus initial auth reference data. Skin-analysis results include the generated skin profile. Avatar and skin-analysis uploads use the same upload-intent table and service; the skin-analysis schema does not own upload-intent storage.
+The migrations create schemas for authentication and user profiles (`app_auth`),
+shared purpose-based image upload intents (`app_cloudinary`), skin assessment
+and analysis (`app_skin_analysis`), and wallets/payments (`app_billing`), plus
+initial auth reference data. Skin-analysis results include the generated skin
+profile, while each user has one versioned questionnaire record. Avatar and
+skin-analysis uploads use the same upload-intent table and service; the
+skin-analysis schema does not own upload-intent storage.
 
 The migration runner connects to PostgreSQL using `GLOWNSCAN_DATABASE_URL` (`DATABASE_URL` is a fallback). It records applied versions and SHA-256 checksums in `public.schema_migrations`, applies each migration in its own transaction, and uses a PostgreSQL advisory lock to prevent concurrent runs. Migrations are run explicitly from the CLI; the NestJS application does not apply them at startup.
 
@@ -312,6 +349,13 @@ Browser requests are allowed from the comma-separated origins in `GLOWNSCAN_FRON
 
 Successful API responses use the shared envelope `{"status":200,"message":"Success","data":{...}}`. Errors use the same shape with `data: null`; known HTTP exceptions retain their HTTP status, while unexpected exceptions return a generic 500 response. Use the shared HTTP exception classes from `src/shared/handler/http.exceptions.ts` for common 400, 401, 403, 404, 409, and 422 responses.
 
+Protected-client integrations can use the stable `errorCode` field on error
+responses: `ACCESS_TOKEN_EXPIRED` means a refresh attempt is appropriate;
+`INVALID_ACCESS_TOKEN` means the access token cannot be accepted; and
+`SESSION_REVOKED` means the client must clear its local session. Refresh only
+retries the original safe request once. Do not refresh for login failures or
+automatically replay state-changing requests.
+
 The auth `Password` value object requires at least six characters, including an uppercase letter, a lowercase letter, a number, and a special character. Its string/JSON representations are redacted to avoid accidental disclosure.
 
 ### Implemented endpoint
@@ -319,6 +363,8 @@ The auth `Password` value object requires at least six characters, including an 
 | Method | Endpoint                       | Response                                                               |
 | ------ | ------------------------------ | ---------------------------------------------------------------------- |
 | `GET`  | `/health/database`             | `{"status":"ok","database":"connected"}`                               |
+| `GET`  | `/health/live`                 | Process liveness probe                                                 |
+| `GET`  | `/health/ready`                | Dependency readiness probe                                             |
 | `POST` | `/auth/register`               | Create a pending user with the `USER` role and send email verification |
 | `POST` | `/auth/verify-email`           | Verify a registration token using `{ "email", "token" }`               |
 | `POST` | `/auth/verify-email/resend`    | Resend a verification link without revealing account status            |
@@ -330,6 +376,17 @@ The auth `Password` value object requires at least six characters, including an 
 | `POST` | `/auth/password/reset/request` | Send a reset link without revealing whether the email exists           |
 | `POST` | `/auth/password/reset/confirm` | Reset using `{ "email", "token", "newPassword" }`                      |
 | `POST` | `/auth/password/change`        | Authenticated; verify `oldPassword`, set `newPassword`                 |
+| `GET`  | `/skin-assessments/current`    | Return the caller's current questionnaire or `null`                    |
+| `PUT`  | `/skin-assessments/current`    | Validate and save the caller's questionnaire                           |
+| `POST` | `/skin-analysis/upload-intent` | Create a one-time owned Cloudinary upload intent                       |
+| `POST` | `/skin-analysis/analyze`       | Verify, analyze, and persist a skin-analysis session                   |
+| `GET`  | `/skin-analysis/history`       | Return the caller's paginated analysis history                         |
+| `GET`  | `/skin-analysis/:analysisId`   | Return an analysis only when it belongs to the caller                  |
+| `POST` | `/payment/top-ups`             | Create a VietQR-backed internal-wallet top-up                          |
+| `POST` | `/payment/premium-checkouts`   | Create a VietQR-backed `PREMIUM` package checkout                      |
+| `GET`  | `/payment/orders/:orderId`     | Return an owned payment order                                          |
+| `GET`  | `/payment/wallet`              | Return the caller's wallet and ledger                                  |
+| `POST` | `/payment/webhook`             | Receive authenticated SePay payment confirmation                       |
 
 All POST request bodies are validated; unknown fields are rejected. Passwords are bcrypt-hashed and limited to 72 UTF-8 bytes to match bcrypt's input limit. Verification and reset tokens are random, single-use, expire, and are stored only as SHA-256 hashes. Refresh tokens are opaque, rotated on use, and stored hashed in `app_auth.refresh_tokens` (not `action_tokens`). Password changes invalidate existing access tokens and revoke refresh sessions. Five consecutive failed login attempts lock the account for 15 minutes. Password-reset requests always return the same message whether or not the account exists.
 
@@ -353,20 +410,25 @@ npm run db:migrate
 
 The initial migration sequence is:
 
-| Version | Description                                                                              |
-| ------- | ---------------------------------------------------------------------------------------- |
+| Version | Description                                                                                                   |
+| ------- | ------------------------------------------------------------------------------------------------------------- |
 | V001    | Authentication, authorization, Firebase provider identities, user profile fields, and nullable user passwords |
-| V002    | Seed auth roles, permissions, and role-permission mappings                               |
-| V003    | Cloudinary upload intents                                                                |
-| V004    | Skin analysis schema                                                                     |
-| V005    | Rate-limit and analysis quota schema                                                     |
-| V006    | Internal wallets, SePay payment orders/events, ledger, and PREMIUM subscriptions         |
+| V002    | Seed auth roles, permissions, and role-permission mappings                                                    |
+| V003    | Cloudinary upload intents                                                                                     |
+| V004    | Skin analysis schema                                                                                          |
+| V005    | Rate-limit and analysis quota schema                                                                          |
+| V006    | Internal wallets, SePay payment orders/events, ledger, and PREMIUM subscriptions                              |
+| V007    | Versioned user skin-assessment questionnaire                                                                  |
 
-Add a new `V<number>__description.sql` file for future changes; do not edit a migration after it has been applied. The runner detects missing or modified applied migrations and stops with an error. The current V001–V006 set requires a clean schema. `npm run db:migrate:reset` drops the application schemas (`app_auth`, `app_cloudinary`, `app_skin_analysis`, `app_billing`), the legacy `app_profile` schema, and `public.schema_migrations`, then reapplies all migrations. It does not drop unrelated schemas, but is destructive and has no confirmation guard; verify `GLOWNSCAN_DATABASE_URL` and use only for demo/development data. Never run it against production or a database whose data must be retained. If the old combined SQL script was already run, do not apply these migrations blindly; back up and baseline that database deliberately.
+Add a new `V<number>__description.sql` file for future changes; do not edit a migration after it has been applied. The runner detects missing or modified applied migrations and stops with an error. The current V001–V007 set requires a clean schema. `npm run db:migrate:reset` drops the application schemas (`app_auth`, `app_cloudinary`, `app_skin_analysis`, `app_billing`), the legacy `app_profile` schema, and `public.schema_migrations`, then reapplies all migrations. It does not drop unrelated schemas, but is destructive and has no confirmation guard; verify `GLOWNSCAN_DATABASE_URL` and use only for demo/development data. Never run it against production or a database whose data must be retained. If the old combined SQL script was already run, do not apply these migrations blindly; back up and baseline that database deliberately.
 
 The migration role should be separate from the application's runtime credentials. The schemas enable row-level security and revoke access from `PUBLIC`; configure the required database grants and RLS policies for the runtime role as part of application integration.
 
 ### SePay, wallet, and PREMIUM payments
+
+After a payment transaction commits, the notification module sends a payment
+confirmation email and an FCM notification to the user's registered devices.
+Notification delivery is best-effort and does not roll back a confirmed payment.
 
 `PREMIUM` is the only paid entitlement; “VIP” is merely a UI label, not a second plan. Packages are `PREMIUM_MONTHLY` (45,000 VND / 30 days), `PREMIUM_QUARTERLY` (120,000 VND / 90 days), and `PREMIUM_YEARLY` (500,000 VND / 365 days).
 
