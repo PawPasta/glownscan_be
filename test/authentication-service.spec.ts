@@ -29,6 +29,7 @@ import {
   BadRequestException,
   ConflictException,
   UnauthorizedException,
+  InvalidAccessTokenException,
 } from '../src/shared/handler/http.exceptions.js';
 
 const userId = '25bdca3a-e978-4bdb-96f3-51fb5b0413bc';
@@ -462,7 +463,7 @@ describe('AuthenticationService', () => {
     expect(repository.createRefreshSession).not.toHaveBeenCalled();
   });
 
-  it('rotates refresh tokens only when paired with a valid, unexpired current access token', async () => {
+  it('rotates refresh tokens when the paired access token is valid or expired', async () => {
     const claims = {
       sub: userId,
       email: 'user@example.com',
@@ -491,6 +492,7 @@ describe('AuthenticationService', () => {
     expect(jwt.verifyAsync).toHaveBeenCalledWith('current-access-token', {
       issuer: 'glownscan-api',
       audience: 'glownscan-client',
+      ignoreExpiration: true,
     });
     expect(repository.rotateRefreshToken).toHaveBeenCalledWith(
       expect.stringMatching(/^[0-9a-f]{64}$/),
@@ -510,20 +512,7 @@ describe('AuthenticationService', () => {
         accessToken: 'invalid-access-token',
         refreshToken: 'current-refresh-token'.padEnd(32, 'x'),
       }),
-    ).rejects.toBeInstanceOf(UnauthorizedException);
-    expect(repository.rotateRefreshToken).not.toHaveBeenCalled();
-  });
-
-  it('does not rotate a refresh token when the paired access token is expired', async () => {
-    jwt.verifyAsync.mockRejectedValue(new Error('jwt expired'));
-
-    await expect(
-      service.refresh({
-        accessToken: 'expired-access-token',
-        refreshToken: 'current-refresh-token'.padEnd(32, 'x'),
-      }),
-    ).rejects.toBeInstanceOf(UnauthorizedException);
-
+    ).rejects.toBeInstanceOf(InvalidAccessTokenException);
     expect(repository.rotateRefreshToken).not.toHaveBeenCalled();
   });
 

@@ -4,6 +4,47 @@ import {
   type HttpExceptionOptions,
 } from '@nestjs/common';
 
+export class ApiException extends HttpException {
+  constructor(
+    status: HttpStatus,
+    message: string,
+    readonly errorCode: string,
+    options?: HttpExceptionOptions,
+  ) {
+    super({ message, errorCode }, status, options);
+  }
+}
+
+export class AccessTokenExpiredException extends ApiException {
+  constructor() {
+    super(
+      HttpStatus.UNAUTHORIZED,
+      'Access token has expired.',
+      'ACCESS_TOKEN_EXPIRED',
+    );
+  }
+}
+
+export class InvalidAccessTokenException extends ApiException {
+  constructor() {
+    super(
+      HttpStatus.UNAUTHORIZED,
+      'Access token is invalid.',
+      'INVALID_ACCESS_TOKEN',
+    );
+  }
+}
+
+export class SessionRevokedException extends ApiException {
+  constructor() {
+    super(
+      HttpStatus.UNAUTHORIZED,
+      'Session has been revoked or is no longer active.',
+      'SESSION_REVOKED',
+    );
+  }
+}
+
 export class BadRequestException extends HttpException {
   constructor(message = 'Bad request', options?: HttpExceptionOptions) {
     super(message, HttpStatus.BAD_REQUEST, options);

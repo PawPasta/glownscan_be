@@ -62,6 +62,14 @@ export class TokenService {
     });
   }
 
+  verifyAccessTokenForRefresh(token: string): Promise<TokenPayload> {
+    return this.jwt.verifyAsync<TokenPayload>(token, {
+      issuer: this.issuer,
+      audience: this.audience,
+      ignoreExpiration: true,
+    });
+  }
+
   createOpaqueToken(): string {
     return randomBytes(32).toString('base64url');
   }

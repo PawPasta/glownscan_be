@@ -1,7 +1,10 @@
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import type { Request } from 'express';
-import { UnauthorizedException } from '../handler/http.exceptions.js';
+import {
+  AccessTokenExpiredException,
+  InvalidAccessTokenException,
+} from '../handler/http.exceptions.js';
 import type { SecurityContext } from './security.context.js';
 import { AuthenticationService } from '../../modules/auth/application/use-case/authentication.service.js';
 
@@ -26,14 +29,17 @@ export class JwtAuthGuard implements CanActivate {
     const authorization = request.headers.authorization;
     const [scheme, token] = authorization?.split(' ') ?? [];
     if (scheme !== 'Bearer' || !token) {
-      throw new UnauthorizedException('Bearer access token is required.');
+      throw new InvalidAccessTokenException();
     }
 
     let claims: JwtClaims;
     try {
       claims = await this.jwt.verifyAsync<JwtClaims>(token);
-    } catch {
-      throw new UnauthorizedException('Access token is invalid or expired.');
+    } catch (error) {
+      if (error instanceof Error && error.name === 'TokenExpiredError') {
+        throw new AccessTokenExpiredException();
+      }
+      throw new InvalidAccessTokenException();
     }
     request.user = await this.authentication.validateAccessToken(claims);
     return true;
