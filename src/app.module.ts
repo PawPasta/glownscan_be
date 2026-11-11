@@ -6,6 +6,7 @@ import { DatabaseModule } from './shared/database/database.module.js';
 import { HealthController } from './shared/database/health.controller.js';
 import { RateLimitModule } from './shared/rate-limit/rate-limit.module.js';
 import { PaymentModule } from './modules/payment/payment.module.js';
+import { CatalogModule } from './modules/catalog/catalog.module.js';
 import { validateEnvironment } from './shared/config/environment.validation.js';
 
 @Module({
@@ -20,6 +21,7 @@ import { validateEnvironment } from './shared/config/environment.validation.js';
     AuthModule,
     SkinAnalysisModule,
     PaymentModule,
+    CatalogModule,
   ],
   controllers: [HealthController],
   providers: [],

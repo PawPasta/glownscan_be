@@ -27,6 +27,9 @@ import { SmtpEmailService } from './infrastructure/adapters/smtp-email.service.j
 import { AuthController } from './presentation/auth.controller.js';
 import { JwtAuthGuard } from '../../shared/security/jwt-auth.guard.js';
 import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module.js';
+import { AdminGuard } from '../../shared/security/admin.guard.js';
+import { AdminAccountService } from './application/use-case/admin-account.service.js';
+import { AdminAccountController } from './presentation/admin-account.controller.js';
 
 @Module({
   imports: [
@@ -67,7 +70,7 @@ import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module.js';
       },
     }),
   ],
-  controllers: [AuthController],
+  controllers: [AuthController, AdminAccountController],
   providers: [
     PostgresAuthenticationAdapter,
     {
@@ -131,6 +134,8 @@ import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module.js';
     TokenService,
     SmtpEmailService,
     JwtAuthGuard,
+    AdminGuard,
+    AdminAccountService,
   ],
   exports: [AuthenticationService, JwtAuthGuard, JwtModule],
 })
