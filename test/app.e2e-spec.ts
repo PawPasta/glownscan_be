@@ -29,6 +29,21 @@ describe('AppController (e2e)', () => {
       .expect({ status: 'ok', database: 'connected' });
   });
 
+  it('protects payment history, subscription, support, and admin operations', async () => {
+    const server = request(app.getHttpServer());
+    await server.get('/payment/subscription').expect(401);
+    await server.get('/payment/orders').expect(401);
+    await server
+      .post(
+        '/payment/orders/00000000-0000-4000-8000-000000000001/support-requests',
+      )
+      .send({ subject: 'Help', note: 'Transfer missing' })
+      .expect(401);
+    await server.get('/payment/admin/orders').expect(401);
+    await server.get('/admin/dashboard/summary').expect(401);
+    await server.get('/admin/audit-logs').expect(401);
+  });
+
   afterEach(async () => {
     await app.close();
   });

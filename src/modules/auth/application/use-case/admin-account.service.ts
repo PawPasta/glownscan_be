@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { AuditLogService } from '../../../audit/application/use-case/audit-log.service.js';
 import {
   BadRequestException,
   ConflictException,
@@ -21,6 +22,7 @@ export class AdminAccountService {
     private readonly accounts: AdminAccountPort,
     @Inject(PASSWORD_HASHER_PORT)
     private readonly passwordHasher: PasswordHasherPort,
+    private readonly auditLog: AuditLogService,
   ) {}
 
   async list(page: number, limit: number, search?: string) {
@@ -34,6 +36,7 @@ export class AdminAccountService {
   }
 
   async create(input: {
+    actorId: string;
     email: string;
     password: string;
     fullName?: string;
@@ -58,6 +61,13 @@ export class AdminAccountService {
         throw new BadRequestException('One or more role codes are invalid.');
       throw error;
     }
+    await this.auditLog.record({
+      actorUserId: input.actorId,
+      action: 'ADMIN_ACCOUNT_CREATED',
+      resourceType: 'USER_ACCOUNT',
+      resourceId: id,
+      metadata: { roleCodes: roles },
+    });
     return this.get(id);
   }
 
@@ -92,6 +102,13 @@ export class AdminAccountService {
       throw error;
     }
     if (!updated) throw new NotFoundException('Account not found.');
+    await this.auditLog.record({
+      actorUserId: actorId,
+      action: 'ADMIN_ACCOUNT_UPDATED',
+      resourceType: 'USER_ACCOUNT',
+      resourceId: id,
+      metadata: { changedFields: Object.keys(input) },
+    });
     return this.get(id);
   }
 
@@ -107,6 +124,12 @@ export class AdminAccountService {
       throw new ForbiddenException(
         'The last administrator account cannot be deleted.',
       );
+    await this.auditLog.record({
+      actorUserId: actorId,
+      action: 'ADMIN_ACCOUNT_DELETED',
+      resourceType: 'USER_ACCOUNT',
+      resourceId: id,
+    });
     return { message: 'Account deleted.' };
   }
 }

@@ -555,9 +555,12 @@ export class PostgresAuthenticationAdapter
       installationId: string;
       platform: 'ANDROID' | 'IOS';
       fcmToken: string;
+      appVersion?: string;
+      locale?: string;
+      timezone?: string;
     },
-  ): Promise<void> {
-    await this.database.transaction(async (client) => {
+  ): Promise<{ updatedAt: Date }> {
+    return this.database.transaction(async (client) => {
       const device = await client.query<{ id: Uuid }>(
         `INSERT INTO app_auth.user_devices (user_id, device_uuid, platform, last_active_at)
          VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
@@ -567,6 +570,22 @@ export class PostgresAuthenticationAdapter
         [userId, input.installationId, input.platform],
       );
       const deviceId = device.rows[0].id;
+      const metadata = await client.query<{ updated_at: Date }>(
+        `INSERT INTO app_auth.device_metadata (device_id, app_version, locale, timezone)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (device_id) DO UPDATE SET
+           app_version = COALESCE(EXCLUDED.app_version, app_auth.device_metadata.app_version),
+           locale = COALESCE(EXCLUDED.locale, app_auth.device_metadata.locale),
+           timezone = COALESCE(EXCLUDED.timezone, app_auth.device_metadata.timezone),
+           updated_at = CURRENT_TIMESTAMP
+         RETURNING updated_at`,
+        [
+          deviceId,
+          input.appVersion ?? null,
+          input.locale ?? null,
+          input.timezone ?? null,
+        ],
+      );
       await client.query(
         `UPDATE app_auth.push_registrations
          SET status = 'INACTIVE'
@@ -585,6 +604,7 @@ export class PostgresAuthenticationAdapter
            last_registered_at = CURRENT_TIMESTAMP`,
         [deviceId, input.fcmToken],
       );
+      return { updatedAt: metadata.rows[0].updated_at };
     });
   }
 

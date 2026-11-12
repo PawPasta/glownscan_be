@@ -12,6 +12,10 @@ import {
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AdminGuard } from '../../../shared/security/admin.guard.js';
 import { JwtAuthGuard } from '../../../shared/security/jwt-auth.guard.js';
+import {
+  CurrentUser,
+  type SecurityContext,
+} from '../../../shared/security/security.context.js';
 import { CatalogService } from '../application/use-case/catalog.service.js';
 import {
   CatalogStatusDto,
@@ -50,6 +54,43 @@ export class CatalogController {
   }
 }
 
+@ApiTags('products')
+@Controller('products')
+export class MobileProductController {
+  constructor(private readonly catalog: CatalogService) {}
+
+  @Get(':id')
+  async getProduct(@Param('id') id: string) {
+    const product = (await this.catalog.getProduct(id, true)) as {
+      id: string;
+      name: string;
+      brand: string | null;
+      description: string | null;
+      imageUrl: string | null;
+      ingredients?: Array<{ name: string }>;
+    };
+    const links = (await this.catalog.listAffiliateLinks(id, true)) as Array<{
+      url: string;
+    }>;
+    return {
+      id: product.id,
+      name: product.name,
+      brand: product.brand,
+      description: product.description,
+      ingredients: (product.ingredients ?? []).map(
+        (ingredient) => ingredient.name,
+      ),
+      usageInstructions: null,
+      warnings: [],
+      imageUrls: product.imageUrl ? [product.imageUrl] : [],
+      externalUrl: links[0]?.url ?? null,
+      affiliateDisclosure: links.length
+        ? 'This product link may be an affiliate link.'
+        : null,
+    };
+  }
+}
+
 @ApiTags('admin-catalog')
 @ApiBearerAuth('access-token')
 @UseGuards(JwtAuthGuard, AdminGuard)
@@ -60,37 +101,61 @@ export class AdminCatalogController {
   @Get('ingredients') listIngredients(@Query() query: PaginationDto) {
     return this.catalog.listIngredients(options(query, false));
   }
-  @Post('ingredients') createIngredient(@Body() body: CreateIngredientDto) {
+  @Post('ingredients') createIngredient(
+    @CurrentUser() user: SecurityContext,
+    @Body() body: CreateIngredientDto,
+  ) {
     return this.catalog.createIngredient(
+      user.userId,
       body as unknown as Record<string, unknown>,
     );
   }
   @Patch('ingredients/:id') updateIngredient(
+    @CurrentUser() user: SecurityContext,
     @Param('id') id: string,
     @Body() body: UpdateIngredientDto,
   ) {
-    return this.catalog.updateIngredient(id, body as Record<string, unknown>);
+    return this.catalog.updateIngredient(
+      user.userId,
+      id,
+      body as Record<string, unknown>,
+    );
   }
-  @Delete('ingredients/:id') deleteIngredient(@Param('id') id: string) {
-    return this.catalog.deleteIngredient(id);
+  @Delete('ingredients/:id') deleteIngredient(
+    @CurrentUser() user: SecurityContext,
+    @Param('id') id: string,
+  ) {
+    return this.catalog.deleteIngredient(user.userId, id);
   }
 
   @Get('skin-concerns') listConcerns(@Query() query: PaginationDto) {
     return this.catalog.listSkinConcerns(options(query, false));
   }
-  @Post('skin-concerns') createConcern(@Body() body: CreateSkinConcernDto) {
+  @Post('skin-concerns') createConcern(
+    @CurrentUser() user: SecurityContext,
+    @Body() body: CreateSkinConcernDto,
+  ) {
     return this.catalog.createSkinConcern(
+      user.userId,
       body as unknown as Record<string, unknown>,
     );
   }
   @Patch('skin-concerns/:id') updateConcern(
+    @CurrentUser() user: SecurityContext,
     @Param('id') id: string,
     @Body() body: UpdateSkinConcernDto,
   ) {
-    return this.catalog.updateSkinConcern(id, body as Record<string, unknown>);
+    return this.catalog.updateSkinConcern(
+      user.userId,
+      id,
+      body as Record<string, unknown>,
+    );
   }
-  @Delete('skin-concerns/:id') deleteConcern(@Param('id') id: string) {
-    return this.catalog.deleteSkinConcern(id);
+  @Delete('skin-concerns/:id') deleteConcern(
+    @CurrentUser() user: SecurityContext,
+    @Param('id') id: string,
+  ) {
+    return this.catalog.deleteSkinConcern(user.userId, id);
   }
 
   @Get('products') listProducts(@Query() query: PaginationDto) {
@@ -99,17 +164,24 @@ export class AdminCatalogController {
   @Get('products/:id') product(@Param('id') id: string) {
     return this.catalog.getProduct(id, false);
   }
-  @Post('products') createProduct(@Body() body: CreateProductDto) {
-    return this.catalog.createProduct(body);
+  @Post('products') createProduct(
+    @CurrentUser() user: SecurityContext,
+    @Body() body: CreateProductDto,
+  ) {
+    return this.catalog.createProduct(user.userId, body);
   }
   @Patch('products/:id') updateProduct(
+    @CurrentUser() user: SecurityContext,
     @Param('id') id: string,
     @Body() body: UpdateProductDto,
   ) {
-    return this.catalog.updateProduct(id, body);
+    return this.catalog.updateProduct(user.userId, id, body);
   }
-  @Delete('products/:id') deleteProduct(@Param('id') id: string) {
-    return this.catalog.deleteProduct(id);
+  @Delete('products/:id') deleteProduct(
+    @CurrentUser() user: SecurityContext,
+    @Param('id') id: string,
+  ) {
+    return this.catalog.deleteProduct(user.userId, id);
   }
 
   @Get('products/:productId/affiliate-links') links(
@@ -119,25 +191,32 @@ export class AdminCatalogController {
     return this.catalog.listAffiliateLinks(productId, query.active !== 'false');
   }
   @Post('products/:productId/affiliate-links') createLink(
+    @CurrentUser() user: SecurityContext,
     @Param('productId') productId: string,
     @Body() body: CreateAffiliateLinkDto,
   ) {
     return this.catalog.createAffiliateLink(
+      user.userId,
       productId,
       body as unknown as Record<string, unknown>,
     );
   }
   @Patch('affiliate-links/:id') updateLink(
+    @CurrentUser() user: SecurityContext,
     @Param('id') id: string,
     @Body() body: UpdateAffiliateLinkDto,
   ) {
     return this.catalog.updateAffiliateLink(
+      user.userId,
       id,
       body as Record<string, unknown>,
     );
   }
-  @Delete('affiliate-links/:id') deleteLink(@Param('id') id: string) {
-    return this.catalog.deleteAffiliateLink(id);
+  @Delete('affiliate-links/:id') deleteLink(
+    @CurrentUser() user: SecurityContext,
+    @Param('id') id: string,
+  ) {
+    return this.catalog.deleteAffiliateLink(user.userId, id);
   }
 }
 

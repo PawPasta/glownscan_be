@@ -92,7 +92,9 @@ describe('AuthenticationService', () => {
       revokeRefreshToken: vi.fn().mockResolvedValue(undefined),
       getProfile: vi.fn().mockResolvedValue({ profile: { id: userId } }),
       updateUserProfile: vi.fn().mockResolvedValue(undefined),
-      syncDeviceRegistration: vi.fn().mockResolvedValue(undefined),
+      syncDeviceRegistration: vi
+        .fn()
+        .mockResolvedValue({ updatedAt: new Date('2026-01-01T00:00:00.000Z') }),
       deactivateDeviceRegistration: vi.fn().mockResolvedValue(undefined),
     };
     emailService = {
@@ -331,11 +333,18 @@ describe('AuthenticationService', () => {
         platform: 'ANDROID',
         fcmToken: ' fcm-token ',
       }),
-    ).resolves.toEqual({ message: 'Device registration synchronized.' });
+    ).resolves.toEqual({
+      installationId: 'flutter-installation-123',
+      registered: true,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
     expect(repository.syncDeviceRegistration).toHaveBeenCalledWith(userId, {
       installationId: 'flutter-installation-123',
       platform: 'ANDROID',
       fcmToken: 'fcm-token',
+      appVersion: undefined,
+      locale: undefined,
+      timezone: undefined,
     });
 
     await service.deactivateDeviceRegistration(

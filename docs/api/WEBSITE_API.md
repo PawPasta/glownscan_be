@@ -13,7 +13,15 @@ payment experience. It must not expose admin capabilities to ordinary users;
 the backend enforces `ADMIN` role checks regardless of frontend visibility.
 Flutter does not call these admin routes.
 
-Most responses use `{ status, message, data }`; the SePay webhook has its own
+Mobile-only routine, check-in, notification preference/inbox, and device
+registration APIs are documented in `FLUTTER_API.md`; they are not part of the
+website surface. Public product reads are shared: the website may use
+`GET /catalog/products/:productId`, while the mobile client may use the
+presentation alias `GET /products/:id`. Both are public read-only routes and
+must not be confused with `/admin/catalog/**`.
+
+Success responses use `{ status, message, data }`; errors include a stable
+`code` and may also include legacy `errorCode`. The SePay webhook has its own
 server-to-server response. Protected routes use Bearer access tokens. The
 current refresh endpoint accepts access and refresh tokens in the body; cookie
 HttpOnly/CSRF web session support is not currently implemented. A website
@@ -266,15 +274,24 @@ Catalog and affiliate-link DELETE operations are soft deactivations and return
 
 ## Payment pages
 
-| Method | Route                                       | Status      | Purpose                                                       |
-| ------ | ------------------------------------------- | ----------- | ------------------------------------------------------------- |
-| POST   | `/payment/top-ups`                          | Implemented | Create a wallet top-up order and VietQR URL.                  |
-| POST   | `/payment/premium-checkouts`                | Implemented | Create a fixed-package checkout using a package code.         |
-| GET    | `/payment/wallet`                           | Implemented | Read the signed-in user's wallet balance.                     |
-| GET    | `/payment/wallet/transactions?page=&limit=` | Implemented | Read wallet ledger history.                                   |
-| GET    | `/payment/orders/:orderId`                  | Implemented | Poll only the caller's order status.                          |
-| POST   | `/payment/orders/:orderId/cancel`           | Implemented | Cancel own pending order with reason.                         |
-| POST   | `/payment/webhook`                          | Implemented | Server-to-server SePay callback; never called by the browser. |
+| Method | Route                                        | Status      | Purpose                                                       |
+| ------ | -------------------------------------------- | ----------- | ------------------------------------------------------------- |
+| GET    | `/payment/packages`                          | Implemented | List active Premium offers and server-managed prices.         |
+| POST   | `/payment/top-ups`                           | Implemented | Create a wallet top-up order and VietQR URL.                  |
+| POST   | `/payment/premium-checkouts`                 | Implemented | Create a fixed-package checkout using a package code.         |
+| GET    | `/payment/wallet`                            | Implemented | Read the signed-in user's wallet balance.                     |
+| GET    | `/payment/wallet/transactions?page=&limit=`  | Implemented | Read wallet ledger history.                                   |
+| GET    | `/payment/subscription`                      | Implemented | Read the caller's Premium status and expiry.                  |
+| GET    | `/payment/orders?page=&limit=`               | Implemented | Read the caller's paginated payment-order history.            |
+| GET    | `/payment/orders/:orderId`                   | Implemented | Poll only the caller's order status.                          |
+| POST   | `/payment/orders/:orderId/cancel`            | Implemented | Cancel own pending order with reason.                         |
+| POST   | `/payment/orders/:orderId/support-requests`  | Implemented | Create a support request for an owned payment order.          |
+| GET    | `/payment/admin/orders?page=&limit=&status=` | Implemented | ADMIN-only order reconciliation view.                         |
+| POST   | `/payment/webhook`                           | Implemented | Server-to-server SePay callback; never called by the browser. |
+
+The active package listing is public; subscription and order-history routes
+require a bearer token. Support requests are scoped to orders owned by that
+token. Admin reconciliation requires the `ADMIN` role.
 
 ### Payment request bodies
 
@@ -303,6 +320,29 @@ client must not send or choose the package price.
 
 `GET /payment/wallet/transactions` accepts integer `page` (default 1) and
 `limit` (default 20, maximum 100).
+
+`GET /payment/orders` accepts the same pagination query. Support-request body:
+
+```json
+{
+  "subject": "Transfer has not been recognised",
+  "note": "Bank reference: 272V602260613233"
+}
+```
+
+`subject` is required and at most 150 characters; `note` is required and at
+most 2,000 characters. The order must belong to the authenticated user.
+`GET /payment/admin/orders` accepts optional `status` from `PENDING`, `PAID`,
+`CANCELLED`, `EXPIRED`, `REFUNDED`, or `FAILED`, with `page`/`limit` as above.
+
+### Admin operations
+
+| Method | Route                            | Status      | Purpose                                             |
+| ------ | -------------------------------- | ----------- | --------------------------------------------------- |
+| GET    | `/admin/dashboard/summary`       | Implemented | Payment, wallet, Premium, and notification summary. |
+| GET    | `/admin/audit-logs?page=&limit=` | Implemented | Paginated sensitive admin-action history.           |
+
+Both routes require a bearer token and the `ADMIN` role.
 
 ### Payment response data
 
@@ -333,6 +373,37 @@ refund returns `{ "id": "<order-uuid>", "status": "REFUNDED" }`.
 The server-to-server webhook bypasses the common envelope and responds with
 HTTP 200 `{ "success": true }` after accepting a valid event. The browser
 should poll its authenticated order endpoint to determine payment status.
+
+`GET /payment/packages` returns
+`{ "items": [{ "code", "name", "description", "priceVnd", "durationDays", "displayOrder", "isActive" }] }`.
+`displayOrder` is currently derived from duration then package code because
+the existing package schema has no editable display-order column; `priceVnd`
+is display-only and checkout still uses the database price.
+
+`GET /payment/subscription` returns `{ "isPremium", "packageCode",
+"startedAt", "expiresAt", "status" }`. With no subscription, the values
+are `false`, `null`, `null`, `null`, and `NONE`; statuses returned are
+`ACTIVE`, `EXPIRED`, `CANCELLED` (refunded subscription), or `NONE`.
+
+`GET /payment/orders` returns `{ "items": [<order>...], "page": 1,
+"limit": 20, "total": 1 }`; each item includes `id`, `type`, `packageCode`,
+`amountVnd`, `status`, `paymentCode`, `createdAt`, `expiresAt`, and `paidAt`.
+Support-request creation returns `{ "id", "orderId", "status": "OPEN",
+"createdAt" }`.
+
+`GET /payment/admin/orders` returns `{ "items": [<order>...], "page": 1,
+"limit": 20, "total": 1 }`. Items include the user's ID/email, expected and
+received amounts, payment/provider references, timestamps, and a derived
+`reconciliationStatus` (`MATCHED`, `UNMATCHED`, `PARTIAL`, `OVERPAID`, or
+`LATE`). `MANUAL_REVIEW` is reserved for a future operator decision flow.
+
+The admin dashboard summary's `failedPaymentNotifications` counts distinct
+orders with at least one recorded failed email/FCM delivery. Audit logs return
+`{ "items": [<audit-entry>...], "page": 1, "limit": 20, "total": 1 }`;
+entries include `actorUserId`, `action`, `resourceType`, `resourceId`, safe
+metadata, and `createdAt`. Account changes, catalog writes, and refunds are
+recorded. The API does not yet expose a manual reconciliation decision route
+or include unmatched SePay events that have no corresponding order.
 
 SePay calls `POST /payment/webhook` with the provider's JSON body and
 `X-SePay-Timestamp` and `X-SePay-Signature` headers. Example body:
@@ -379,17 +450,12 @@ accepted by the DTO is:
 }
 ```
 
-## Missing website APIs / contracts
+## Remaining website APIs / contracts
 
-- `GET /payment/packages` (or equivalent) to list active package name, code,
-  VND price, duration, and display order. Today checkout accepts a package code
-  and validates it against database data, but there is no public listing route
-  for rendering current prices.
-- `GET /payment/subscription` (or equivalent) for the caller's active
-  entitlement/expiry and Premium status. The website otherwise cannot reliably
-  render subscription state or explain when it expires.
-- Payment reconciliation/status semantics for unmatched, partial, overpaid,
-  expired, or delayed bank transfers, plus a support route/process for recovery.
+- Manual reconciliation decisions, unmatched SePay event inbox, and handling
+  for overpayment/partial/late transfers still need a privileged workflow.
+- `FAILED` is accepted as an admin filter for forward compatibility, but the
+  current payment-order schema and processing flow do not create that status.
 - If web login uses refresh tokens, a dedicated secure cookie contract
   (HttpOnly, Secure, SameSite), CSRF protection, CORS credentials policy, and
   logout/revocation behavior should be agreed before moving away from the

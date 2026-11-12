@@ -54,6 +54,10 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       status,
       message,
       data: null,
+      code:
+        exception instanceof ApiException
+          ? exception.errorCode
+          : `HTTP_${status}`,
     };
     if (exception instanceof ApiException) body.errorCode = exception.errorCode;
     if (

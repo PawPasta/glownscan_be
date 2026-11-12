@@ -1,11 +1,13 @@
 import { Transform } from 'class-transformer';
 import {
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
   Matches,
   Max,
+  MaxLength,
   Min,
 } from 'class-validator';
 import type { PremiumPackageCode } from '../domain/entities/premium-package.entity.js';
@@ -35,6 +37,44 @@ export class RefundPaymentOrderDto {
   @IsString()
   @IsNotEmpty()
   reason!: string;
+}
+
+export class CreatePaymentSupportRequestDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(150)
+  subject!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(2000)
+  note!: string;
+}
+
+export class PaymentPaginationQueryDto {
+  @Transform(({ value }: { value: unknown }) =>
+    value === undefined ? value : Number(value),
+  )
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  page = 1;
+
+  @Transform(({ value }: { value: unknown }) =>
+    value === undefined ? value : Number(value),
+  )
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit = 20;
+}
+
+export class AdminPaymentOrderQueryDto extends PaymentPaginationQueryDto {
+  @IsOptional()
+  @IsString()
+  @IsIn(['PENDING', 'PAID', 'CANCELLED', 'EXPIRED', 'REFUNDED', 'FAILED'])
+  status?: string;
 }
 
 export class SePayWebhookDto {

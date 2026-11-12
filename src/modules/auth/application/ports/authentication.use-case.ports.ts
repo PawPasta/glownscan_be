@@ -57,8 +57,11 @@ export interface DeviceRegistrationPort {
       installationId: string;
       platform: 'ANDROID' | 'IOS';
       fcmToken: string;
+      appVersion?: string;
+      locale?: string;
+      timezone?: string;
     },
-  ): Promise<void>;
+  ): Promise<{ updatedAt: Date }>;
   deactivateDeviceRegistration(
     userId: Uuid,
     installationId: string,

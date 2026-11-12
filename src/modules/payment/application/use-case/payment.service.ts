@@ -7,6 +7,7 @@ import {
   UnauthorizedException,
 } from '../../../../shared/handler/http.exceptions.js';
 import type { Uuid } from '../../../../shared/types/domain.types.js';
+import { AuditLogService } from '../../../audit/application/use-case/audit-log.service.js';
 import { NotificationService } from '../../../notification/application/use-case/notification.service.js';
 import type { PremiumPackageCode } from '../../domain/entities/premium-package.entity.js';
 import type { SePayWebhookEvent } from '../types/sepay-webhook-event.js';
@@ -25,7 +26,16 @@ export class PaymentService {
     @Inject(PAYMENT_DATA_PORT) private readonly paymentData: PaymentDataPort,
     @Inject(PAYMENT_GATEWAY_PORT) private readonly gateway: PaymentGatewayPort,
     private readonly notifications: NotificationService,
+    private readonly auditLog: AuditLogService,
   ) {}
+
+  listActivePackages() {
+    return this.paymentData.listActivePackages();
+  }
+
+  getSubscription(userId: Uuid) {
+    return this.paymentData.findSubscription(userId);
+  }
 
   createTopUp(userId: Uuid, amountVnd: number) {
     return this.createOrder(userId, 'TOP_UP', amountVnd, null, null);
@@ -55,6 +65,47 @@ export class PaymentService {
     return this.paymentData.listTransactions(userId, page, limit);
   }
 
+  listOrders(userId: Uuid, page: number, limit: number) {
+    return this.paymentData.listOwnedOrders(userId, page, limit);
+  }
+
+  listAdminOrders(page: number, limit: number, status?: string) {
+    return this.paymentData.listAdminOrders(page, limit, status);
+  }
+
+  adminDashboardSummary() {
+    return this.paymentData.adminDashboardSummary();
+  }
+
+  listAuditLogs(page: number, limit: number) {
+    return this.auditLog.list(page, limit);
+  }
+
+  async createSupportRequest(
+    userId: Uuid,
+    orderId: string,
+    subject: string,
+    note: string,
+  ) {
+    const normalizedSubject = subject.trim();
+    const normalizedNote = note.trim();
+    if (
+      !normalizedSubject ||
+      normalizedSubject.length > 150 ||
+      !normalizedNote ||
+      normalizedNote.length > 2000
+    )
+      throw new BadRequestException('Support request fields are invalid.');
+    const support = await this.paymentData.createSupportRequest({
+      userId,
+      orderId,
+      subject: normalizedSubject,
+      note: normalizedNote,
+    });
+    if (!support) throw new NotFoundException('Payment order was not found.');
+    return support;
+  }
+
   async cancelOrder(userId: Uuid, orderId: string, reason: string) {
     const cancelled = await this.paymentData.cancelPendingOrder(
       userId,
@@ -81,7 +132,7 @@ export class PaymentService {
     };
   }
 
-  async refundOrder(orderId: string, reason: string) {
+  async refundOrder(orderId: string, reason: string, actorUserId: Uuid) {
     let result: 'REFUNDED' | 'NOT_FOUND' | 'NOT_PAID';
     try {
       result = await this.paymentData.refundPaidOrder(
@@ -96,6 +147,13 @@ export class PaymentService {
       throw new NotFoundException('Payment order was not found.');
     if (result === 'NOT_PAID')
       throw new ConflictException('Only paid orders can be refunded.');
+    await this.auditLog.record({
+      actorUserId,
+      action: 'PAYMENT_ORDER_REFUNDED',
+      resourceType: 'PAYMENT_ORDER',
+      resourceId: orderId,
+      metadata: { reason: normalizeReason(reason) },
+    });
     return { id: orderId, status: 'REFUNDED' };
   }
 
