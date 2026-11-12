@@ -30,13 +30,15 @@ Capture or upload facial image
       └─ Valid
           → Analyze observable skin characteristics
           → Save analysis result
-          → Update skin profile
-          → Show personalized guidance, routine, and product recommendations
+          → Show the saved result and catalog matches
 ```
 
-Analysis history can be used to review saved results over time. Personalized
-guidance, routines, comparisons, and product recommendations are planned and
-are not inferred or returned by the current API.
+Analysis history can be used to review saved results over time.
+`GET /recommendations/me` currently returns deterministic catalog product
+matches from assessment concerns and eligible analysis metrics. AI-generated
+routine drafts, user acceptance, schedules, check-ins, and Google Calendar sync
+are not implemented. See [Recommendations](docs/business/Recommendation.md)
+for the proposed workflow and current gaps.
 
 ### 3. Routine and progress tracking
 
@@ -97,8 +99,9 @@ questionnaire, validation rules, and its two authenticated endpoints.
 
 Project documentation is organized in the [`docs/`](docs/) folder:
 
-- [`architecture/`](docs/architecture/) — backend architecture and source-code responsibilities. See [Backend code structure](docs/architecture/CODE_STRUCTURE.md).
-- [`business/`](docs/business/) — current business workflows for [authentication](docs/business/Authentication.md), [profiles](docs/business/Profile.md), [image uploads](docs/business/Upload-Image.md), and [skin analysis](docs/business/Skin-Analysis.md).
+- [`api/`](docs/api/) — client API boundaries for [Flutter](docs/api/FLUTTER_API.md) and [Website](docs/api/WEBSITE_API.md), including implemented routes and missing contracts.
+- [`architecture/`](docs/architecture/) — backend architecture and source-code responsibilities.
+- [`business/`](docs/business/) — workflows for [authentication](docs/business/Authentication.md), [profiles](docs/business/Profile.md), [image uploads](docs/business/Upload-Image.md), [skin analysis](docs/business/Skin-Analysis.md), [skin assessment](docs/business/Skin-Assessment.md), [recommendations and routines](docs/business/Recommendation.md), [catalog](docs/business/Catalog.md), [payments](docs/business/Payment.md), and [notifications](docs/business/Notification.md).
 - [`aws/`](docs/aws/) — AWS deployment setup and operations, including EC2, Docker, GitHub Actions, and troubleshooting.
 - [`diagram/`](docs/diagram/) — visual references for screen flows, use cases, and user requirements.
 - [`git/`](docs/git/) — repository contribution conventions, including [commit message rules](docs/git/COMMIT.md).
@@ -314,8 +317,8 @@ database/                # Versioned migrations and explicit admin bootstrap
 test/                    # Unit and end-to-end tests
 ```
 
-For a detailed **code explain**—including responsibilities of key files and a
-registration request walkthrough—see [Backend code structure](docs/architecture/CODE_STRUCTURE.md).
+For source-code responsibilities and module boundaries, see the architecture
+documentation in [`docs/architecture/`](docs/architecture/).
 
 Key application and shared files:
 
@@ -379,35 +382,35 @@ The auth `Password` value object requires at least six characters, including an 
 
 ### Implemented endpoint
 
-| Method | Endpoint                       | Response                                                               |
-| ------ | ------------------------------ | ---------------------------------------------------------------------- |
-| `GET`  | `/health/database`             | `{"status":"ok","database":"connected"}`                               |
-| `GET`  | `/health/live`                 | Process liveness probe                                                 |
-| `GET`  | `/health/ready`                | Dependency readiness probe                                             |
-| `POST` | `/auth/register`               | Create a pending user with the `USER` role and send email verification |
-| `POST` | `/auth/verify-email`           | Verify a registration token using `{ "email", "token" }`               |
-| `POST` | `/auth/verify-email/resend`    | Resend a verification link without revealing account status            |
-| `POST` | `/auth/login`                  | Return a JWT access token and opaque refresh token                     |
-| `POST` | `/auth/firebase/login`         | Verify a Firebase ID token, link/create the account, and return tokens |
-| `POST` | `/auth/firebase/mobile/login`  | Firebase mobile login; also register the device FCM token              |
-| `PUT`  | `/devices/me`                  | Upsert the caller's FCM token for a stable installation ID              |
-| `DELETE` | `/devices/me`                | Disable notifications for the caller's installation ID                  |
-| `POST` | `/auth/refresh`                | Rotate a refresh token and return a new access/refresh token pair      |
-| `POST` | `/auth/logout`                 | Revoke the refresh token family                                        |
-| `POST` | `/auth/password/reset/request` | Send a reset link without revealing whether the email exists           |
-| `POST` | `/auth/password/reset/confirm` | Reset using `{ "email", "token", "newPassword" }`                      |
-| `POST` | `/auth/password/change`        | Authenticated; verify `oldPassword`, set `newPassword`                 |
-| `GET`  | `/skin-assessments/current`    | Return the caller's current questionnaire or `null`                    |
-| `PUT`  | `/skin-assessments/current`    | Validate and save the caller's questionnaire                           |
-| `POST` | `/skin-analysis/upload-intent` | Create a one-time owned Cloudinary upload intent                       |
-| `POST` | `/skin-analysis/analyze`       | Verify upload and return `202` queued analysis session                 |
-| `GET`  | `/skin-analysis`               | Return the caller's paginated analysis history                         |
-| `GET`  | `/skin-analysis/:analysisId`   | Return an analysis only when it belongs to the caller                  |
-| `POST` | `/payment/top-ups`             | Create a VietQR-backed internal-wallet top-up                          |
-| `POST` | `/payment/premium-checkouts`   | Create a VietQR-backed `PREMIUM` package checkout                      |
-| `GET`  | `/payment/orders/:orderId`     | Return an owned payment order                                          |
-| `GET`  | `/payment/wallet`              | Return the caller's wallet and ledger                                  |
-| `POST` | `/payment/webhook`             | Receive authenticated SePay payment confirmation                       |
+| Method   | Endpoint                       | Response                                                               |
+| -------- | ------------------------------ | ---------------------------------------------------------------------- |
+| `GET`    | `/health/database`             | `{"status":"ok","database":"connected"}`                               |
+| `GET`    | `/health/live`                 | Process liveness probe                                                 |
+| `GET`    | `/health/ready`                | Dependency readiness probe                                             |
+| `POST`   | `/auth/register`               | Create a pending user with the `USER` role and send email verification |
+| `POST`   | `/auth/verify-email`           | Verify a registration token using `{ "email", "token" }`               |
+| `POST`   | `/auth/verify-email/resend`    | Resend a verification link without revealing account status            |
+| `POST`   | `/auth/login`                  | Return a JWT access token and opaque refresh token                     |
+| `POST`   | `/auth/firebase/login`         | Verify a Firebase ID token, link/create the account, and return tokens |
+| `POST`   | `/auth/firebase/mobile/login`  | Firebase mobile login; also register the device FCM token              |
+| `PUT`    | `/devices/me`                  | Upsert the caller's FCM token for a stable installation ID             |
+| `DELETE` | `/devices/me`                  | Disable notifications for the caller's installation ID                 |
+| `POST`   | `/auth/refresh`                | Rotate a refresh token and return a new access/refresh token pair      |
+| `POST`   | `/auth/logout`                 | Revoke the refresh token family                                        |
+| `POST`   | `/auth/password/reset/request` | Send a reset link without revealing whether the email exists           |
+| `POST`   | `/auth/password/reset/confirm` | Reset using `{ "email", "token", "newPassword" }`                      |
+| `POST`   | `/auth/password/change`        | Authenticated; verify `oldPassword`, set `newPassword`                 |
+| `GET`    | `/skin-assessments/current`    | Return the caller's current questionnaire or `null`                    |
+| `PUT`    | `/skin-assessments/current`    | Validate and save the caller's questionnaire                           |
+| `POST`   | `/skin-analysis/upload-intent` | Create a one-time owned Cloudinary upload intent                       |
+| `POST`   | `/skin-analysis/analyze`       | Verify upload and return `202` queued analysis session                 |
+| `GET`    | `/skin-analysis`               | Return the caller's paginated analysis history                         |
+| `GET`    | `/skin-analysis/:analysisId`   | Return an analysis only when it belongs to the caller                  |
+| `POST`   | `/payment/top-ups`             | Create a VietQR-backed internal-wallet top-up                          |
+| `POST`   | `/payment/premium-checkouts`   | Create a VietQR-backed `PREMIUM` package checkout                      |
+| `GET`    | `/payment/orders/:orderId`     | Return an owned payment order                                          |
+| `GET`    | `/payment/wallet`              | Return the caller's wallet and ledger                                  |
+| `POST`   | `/payment/webhook`             | Receive authenticated SePay payment confirmation                       |
 
 All POST request bodies are validated; unknown fields are rejected. Passwords are bcrypt-hashed and limited to 72 UTF-8 bytes to match bcrypt's input limit. Verification and reset tokens are random, single-use, expire, and are stored only as SHA-256 hashes. Refresh tokens are opaque, rotated on use, and stored hashed in `app_auth.refresh_tokens` (not `action_tokens`). Password changes invalidate existing access tokens and revoke refresh sessions. Five consecutive failed login attempts lock the account for 15 minutes. Password-reset requests always return the same message whether or not the account exists.
 

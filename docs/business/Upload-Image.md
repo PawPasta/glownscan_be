@@ -51,6 +51,9 @@ the complete processing flow.
 - For analysis images, the backend accepts JPEG, PNG, or WebP and limits the
   downloaded image to 10 MB. These content checks are applied during
   analysis, not by the Cloudinary upload itself.
+- A retention duration, deletion-on-request/account-deletion workflow, and
+  verification that Cloudinary assets are removed after the analysis lifecycle
+  are not yet documented as an enforceable product policy.
 - A failed analysis after intent consumption requires a new upload intent and
   upload before retrying.
 

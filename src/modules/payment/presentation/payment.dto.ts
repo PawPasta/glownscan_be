@@ -8,8 +8,9 @@ import {
   Max,
   Min,
 } from 'class-validator';
+import type { PremiumPackageCode } from '../domain/entities/premium-package.entity.js';
 
-export type PremiumPackage = string;
+export type PremiumPackage = PremiumPackageCode;
 
 export class CreateTopUpDto {
   @IsInt()

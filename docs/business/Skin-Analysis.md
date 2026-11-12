@@ -66,15 +66,25 @@ codes are part of the session result for the client to interpret.
   identifying the person or inferring protected/personal characteristics, and
   avoid medical claims. Scores are estimates based on a single image.
 - Consent is expected from the client before upload. The current API flow does
-  not collect or persist a consent record.
+  not collect or persist a consent record. The product still needs a versioned
+  consent record and revocation/data-deletion behavior, especially because the
+  image is sent to a third-party AI provider. A consent table/entity exists in
+  the schema/domain, but the current request flow does not write to it.
 - The worker stores session state, validated result, and observations. It does
   not log image bytes, image URLs, or raw provider responses.
 - The upload intent remains in `app_cloudinary.upload_intents`; Cloudinary owns
   the image while PostgreSQL owns the analysis history and durable job intent.
+- The current analysis flow does not define an image retention/deletion SLA,
+  user-requested deletion workflow, or account-deletion cascade across
+  Cloudinary, PostgreSQL, queued jobs, and derived recommendation data.
+- AI analysis is not yet connected to persisted routine generation. The
+  recommendation feature currently uses validated metrics for catalog matching
+  only; see [Recommendations](./Recommendation.md).
 
 ## Business Workflow Sequence
 
 <!-- mermaid-checked: every participant uses `participant Id as "Label"`, no \n in aliases/messages/notes, every alt/opt/loop closed by end, no `:` inside any alias -->
+
 ```mermaid
 sequenceDiagram
     participant User as "GlowScan User"

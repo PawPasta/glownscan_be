@@ -1,33 +1,21 @@
 import { Injectable } from '@nestjs/common';
 import type { PoolClient } from 'pg';
-import { DatabaseService } from '../../../shared/database/database.service.js';
-import { NotFoundException } from '../../../shared/handler/http.exceptions.js';
-
-type ListOptions = {
-  page: number;
-  limit: number;
-  search?: string;
-  activeOnly: boolean;
-};
-type ProductInput = {
-  name?: string;
-  brand?: string;
-  description?: string;
-  imageUrl?: string;
-  isActive?: boolean;
-  ingredientIds?: string[];
-  skinConcernIds?: string[];
-};
+import { DatabaseService } from '../../../../shared/database/database.service.js';
+import type {
+  CatalogDataPort,
+  CatalogListOptions,
+  CatalogProductInput,
+} from '../../application/ports/catalog-data.port.js';
 
 @Injectable()
-export class CatalogService {
+export class PostgresCatalogAdapter implements CatalogDataPort {
   constructor(private readonly database: DatabaseService) {}
 
-  async listIngredients(options: ListOptions) {
+  async listIngredients(options: CatalogListOptions) {
     return this.listSimple('ingredients', options);
   }
 
-  async listSkinConcerns(options: ListOptions) {
+  async listSkinConcerns(options: CatalogListOptions) {
     return this.listSimple('skin_concerns', options);
   }
 
@@ -55,7 +43,7 @@ export class CatalogService {
     return this.deactivate('skin_concerns', id);
   }
 
-  async listProducts(options: ListOptions) {
+  async listProducts(options: CatalogListOptions) {
     const offset = (options.page - 1) * options.limit;
     const conditions = options.activeOnly ? ['p.is_active'] : [];
     const values: unknown[] = [];
@@ -91,11 +79,11 @@ export class CatalogService {
        FROM app_catalog.products p WHERE p.id = $1 ${activeOnly ? 'AND p.is_active' : ''}`,
       [id],
     );
-    if (!result.rows[0]) throw new NotFoundException('Product not found.');
+    if (!result.rows[0]) throw new Error('PRODUCT_NOT_FOUND');
     return result.rows[0];
   }
 
-  async createProduct(input: ProductInput) {
+  async createProduct(input: CatalogProductInput) {
     const id = await this.database.transaction(async (client) => {
       const result = await client.query<{ id: string }>(
         `INSERT INTO app_catalog.products (name, brand, description, image_url, is_active)
@@ -115,7 +103,7 @@ export class CatalogService {
     return this.getProduct(id, false);
   }
 
-  async updateProduct(id: string, input: ProductInput) {
+  async updateProduct(id: string, input: CatalogProductInput) {
     await this.database.transaction(async (client) => {
       const assignments: string[] = [];
       const values: unknown[] = [id];
@@ -131,7 +119,7 @@ export class CatalogService {
           values.push(
             key === 'name'
               ? input.name?.trim()
-              : input[key as keyof ProductInput],
+              : (input as Record<string, unknown>)[key],
           );
           assignments.push(`${column} = $${values.length}`);
         }
@@ -141,8 +129,7 @@ export class CatalogService {
           `UPDATE app_catalog.products SET ${assignments.join(', ')} WHERE id = $1`,
           values,
         );
-        if (!updated.rowCount)
-          throw new NotFoundException('Product not found.');
+        if (!updated.rowCount) throw new Error('PRODUCT_NOT_FOUND');
       } else {
         await this.assertProductExists(client, id);
       }
@@ -204,8 +191,7 @@ export class CatalogService {
        RETURNING id, product_id AS "productId", partner_name AS "partnerName", url, is_active AS "isActive"`,
       values,
     );
-    if (!result.rows[0])
-      throw new NotFoundException('Affiliate link not found.');
+    if (!result.rows[0]) throw new Error('AFFILIATE_LINK_NOT_FOUND');
     return result.rows[0];
   }
 
@@ -215,7 +201,7 @@ export class CatalogService {
 
   private async listSimple(
     table: 'ingredients' | 'skin_concerns',
-    options: ListOptions,
+    options: CatalogListOptions,
   ) {
     const offset = (options.page - 1) * options.limit;
     const conditions = options.activeOnly ? ['is_active'] : [];
@@ -292,8 +278,7 @@ export class CatalogService {
       `UPDATE app_catalog.${table} SET ${assignments.join(', ')} WHERE id = $1 RETURNING *`,
       values,
     );
-    if (!result.rows[0])
-      throw new NotFoundException('Catalog record not found.');
+    if (!result.rows[0]) throw new Error('CATALOG_RECORD_NOT_FOUND');
     return result.rows[0];
   }
 
@@ -305,8 +290,7 @@ export class CatalogService {
       `UPDATE app_catalog.${table} SET is_active = FALSE WHERE id = $1 RETURNING id, is_active AS "isActive"`,
       [id],
     );
-    if (!result.rows[0])
-      throw new NotFoundException('Catalog record not found.');
+    if (!result.rows[0]) throw new Error('CATALOG_RECORD_NOT_FOUND');
     return result.rows[0];
   }
 
@@ -315,8 +299,7 @@ export class CatalogService {
       `SELECT * FROM app_catalog.${table} WHERE id = $1`,
       [id],
     );
-    if (!result.rows[0])
-      throw new NotFoundException('Catalog record not found.');
+    if (!result.rows[0]) throw new Error('CATALOG_RECORD_NOT_FOUND');
     return result.rows[0];
   }
 
@@ -325,8 +308,7 @@ export class CatalogService {
       `SELECT id, product_id AS "productId", partner_name AS "partnerName", url, is_active AS "isActive" FROM app_catalog.affiliate_links WHERE id = $1`,
       [id],
     );
-    if (!result.rows[0])
-      throw new NotFoundException('Affiliate link not found.');
+    if (!result.rows[0]) throw new Error('AFFILIATE_LINK_NOT_FOUND');
     return result.rows[0];
   }
 
@@ -335,13 +317,13 @@ export class CatalogService {
       'SELECT 1 FROM app_catalog.products WHERE id = $1 FOR UPDATE',
       [id],
     );
-    if (!found.rowCount) throw new NotFoundException('Product not found.');
+    if (!found.rowCount) throw new Error('PRODUCT_NOT_FOUND');
   }
 
   private async replaceProductRelations(
     client: PoolClient,
     productId: string,
-    input: ProductInput,
+    input: CatalogProductInput,
   ) {
     if (input.ingredientIds !== undefined) {
       await client.query(
@@ -367,7 +349,10 @@ export class CatalogService {
     }
   }
 
-  private page(rows: Array<Record<string, unknown>>, options: ListOptions) {
+  private page(
+    rows: Array<Record<string, unknown>>,
+    options: CatalogListOptions,
+  ) {
     const total = Number(rows[0]?.total ?? 0);
     return {
       items: rows.map(({ total: _total, ...row }) => row),

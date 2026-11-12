@@ -100,3 +100,12 @@ state, device registrations, and refresh/push registrations belong to the
 the current authentication workflows do not write audit events to it. Email
 delivery is an external side effect; it does not change account state beyond
 the database actions described above.
+
+## Product gaps
+
+- Define account export, deletion/deactivation, retention, and recovery
+  workflows across authentication and dependent business data.
+- Persist security audit events for high-impact actions (role changes, password
+  resets, session revocation, and admin operations) and define access/retention.
+- Define support/admin processes for locked, suspended, compromised, or
+  duplicate-provider-linked accounts.

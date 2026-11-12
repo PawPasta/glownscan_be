@@ -1,73 +1,43 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { JwtService } from '@nestjs/jwt';
+import { Inject } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
 import type { AuthUserRecord } from '../ports/index.js';
-
-export interface TokenPayload {
-  sub: string;
-  email: string;
-  tokenVersion: number;
-  roles: string[];
-}
+import {
+  TOKEN_RUNTIME_PORT,
+  type TokenPayload,
+  type TokenRuntimePort,
+} from '../ports/token-runtime.port.js';
 
 @Injectable()
 export class TokenService {
-  readonly accessTokenTtlSeconds: number;
-  readonly refreshTokenTtlDays: number;
-  readonly issuer: string;
-  readonly audience: string;
-
   constructor(
-    private readonly jwt: JwtService,
-    config: ConfigService,
-  ) {
-    this.accessTokenTtlSeconds = Number(
-      config.get<string>('GLOWNSCAN_ACCESS_TOKEN_TTL_SECONDS', '900'),
-    );
-    this.refreshTokenTtlDays = Number(
-      config.get<string>('GLOWNSCAN_REFRESH_TOKEN_TTL_DAYS', '30'),
-    );
-    this.issuer = config.get<string>('GLOWNSCAN_JWT_ISSUER', 'glownscan-api');
-    this.audience = config.get<string>(
-      'GLOWNSCAN_JWT_AUDIENCE',
-      'glownscan-client',
-    );
-    if (
-      !Number.isInteger(this.accessTokenTtlSeconds) ||
-      this.accessTokenTtlSeconds < 60 ||
-      !Number.isInteger(this.refreshTokenTtlDays) ||
-      this.refreshTokenTtlDays < 1
-    ) {
-      throw new Error('JWT and refresh token expiration settings are invalid.');
-    }
+    @Inject(TOKEN_RUNTIME_PORT)
+    private readonly tokenRuntime: TokenRuntimePort,
+  ) {}
+
+  get accessTokenTtlSeconds() {
+    return this.tokenRuntime.accessTokenTtlSeconds;
+  }
+
+  get refreshTokenTtlDays() {
+    return this.tokenRuntime.refreshTokenTtlDays;
   }
 
   issueAccessToken(user: AuthUserRecord): Promise<string> {
-    return this.jwt.signAsync(
-      {
-        sub: user.id,
-        email: user.email,
-        tokenVersion: user.tokenVersion,
-        roles: user.roles,
-      } satisfies TokenPayload,
-      { issuer: this.issuer, audience: this.audience },
-    );
+    return this.tokenRuntime.issueAccessToken({
+      sub: user.id,
+      email: user.email,
+      tokenVersion: user.tokenVersion,
+      roles: user.roles,
+    } satisfies TokenPayload);
   }
 
   verifyAccessToken(token: string): Promise<TokenPayload> {
-    return this.jwt.verifyAsync<TokenPayload>(token, {
-      issuer: this.issuer,
-      audience: this.audience,
-    });
+    return this.tokenRuntime.verifyAccessToken(token);
   }
 
   verifyAccessTokenForRefresh(token: string): Promise<TokenPayload> {
-    return this.jwt.verifyAsync<TokenPayload>(token, {
-      issuer: this.issuer,
-      audience: this.audience,
-      ignoreExpiration: true,
-    });
+    return this.tokenRuntime.verifyAccessTokenForRefresh(token);
   }
 
   createOpaqueToken(): string {

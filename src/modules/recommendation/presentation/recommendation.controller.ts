@@ -6,7 +6,7 @@ import {
   CurrentUser,
   type SecurityContext,
 } from '../../../shared/security/security.context.js';
-import { PersonalizedRecommendationService } from '../application/personalized-recommendation.service.js';
+import { PersonalizedRecommendationService } from '../application/use-case/personalized-recommendation.service.js';
 class RecommendationQueryDto {
   @IsOptional() @IsInt() @Min(1) @Max(50) limit = 12;
 }

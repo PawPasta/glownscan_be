@@ -1,0 +1,405 @@
+import { Injectable } from '@nestjs/common';
+import { DatabaseService } from '../../../../shared/database/database.service.js';
+import type { Uuid } from '../../../../shared/types/domain.types.js';
+import type {
+  ActivePremiumPackage,
+  PaymentDataPort,
+  PaymentOrderRecord,
+} from '../../application/ports/payment-data.port.js';
+import type { PaymentSucceededNotification } from '../../../notification/domain/entities/payment-succeeded-notification.entity.js';
+import type { PoolClient } from 'pg';
+
+@Injectable()
+export class PostgresPaymentDataAdapter implements PaymentDataPort {
+  constructor(private readonly database: DatabaseService) {}
+
+  async findActivePackage(code: string): Promise<ActivePremiumPackage | null> {
+    const result = await this.database.query<{
+      code: string;
+      amount_vnd: string;
+      duration_days: number;
+    }>(
+      `SELECT code, amount_vnd, duration_days FROM app_billing.premium_packages
+       WHERE code = $1 AND is_active = TRUE`,
+      [code],
+    );
+    const row = result.rows[0];
+    return row
+      ? {
+          code: row.code,
+          amountVnd: Number(row.amount_vnd),
+          durationDays: row.duration_days,
+        }
+      : null;
+  }
+
+  async getOrCreateWallet(userId: Uuid) {
+    return this.database.transaction(async (client) => {
+      await client.query(
+        `INSERT INTO app_billing.wallets (user_id) VALUES ($1)
+         ON CONFLICT (user_id) DO NOTHING`,
+        [userId],
+      );
+      const result = await client.query<{ balance_vnd: string }>(
+        'SELECT balance_vnd FROM app_billing.wallets WHERE user_id = $1',
+        [userId],
+      );
+      return { balanceVnd: Number(result.rows[0]?.balance_vnd ?? 0) };
+    });
+  }
+
+  async listTransactions(userId: Uuid, page: number, limit: number) {
+    const result = await this.database.query<{
+      id: string;
+      transaction_type: string;
+      direction: string;
+      amount_vnd: string;
+      balance_after_vnd: string;
+      description: string;
+      created_at: Date;
+    }>(
+      `SELECT id, transaction_type, direction, amount_vnd, balance_after_vnd,
+              description, created_at FROM app_billing.wallet_transactions
+       WHERE wallet_user_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+      [userId, limit, (page - 1) * limit],
+    );
+    return result.rows.map((row) => ({
+      id: row.id,
+      type: row.transaction_type,
+      direction: row.direction,
+      amountVnd: Number(row.amount_vnd),
+      balanceAfterVnd: Number(row.balance_after_vnd),
+      description: row.description,
+      createdAt: row.created_at,
+    }));
+  }
+
+  async cancelPendingOrder(userId: Uuid, orderId: string, reason: string) {
+    const result = await this.database.query(
+      `UPDATE app_billing.payment_orders
+       SET status = 'CANCELLED', cancel_reason = $3, cancelled_at = CURRENT_TIMESTAMP
+       WHERE id = $1 AND user_id = $2 AND status = 'PENDING' RETURNING id`,
+      [orderId, userId, reason],
+    );
+    return result.rowCount === 1;
+  }
+
+  async findOwnedOrder(userId: Uuid, orderId: string) {
+    const result = await this.database.query<PaymentOrderRecord>(
+      `SELECT id, user_id, order_type, premium_package, premium_duration_days,
+              amount_vnd, status, payment_code, expires_at
+       FROM app_billing.payment_orders WHERE id = $1 AND user_id = $2`,
+      [orderId, userId],
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async refundPaidOrder(orderId: string, reason: string, adminEmail: string) {
+    return this.database.transaction(async (client) => {
+      const result = await client.query<PaymentOrderRecord>(
+        `SELECT id, user_id, order_type, premium_package, premium_duration_days,
+                amount_vnd, status, payment_code, expires_at
+         FROM app_billing.payment_orders WHERE id = $1 FOR UPDATE`,
+        [orderId],
+      );
+      const order = result.rows[0];
+      if (!order) return 'NOT_FOUND' as const;
+      if (order.status !== 'PAID') return 'NOT_PAID' as const;
+
+      const adminId = await this.findAdminId(client, adminEmail);
+      await this.lockWallets(client, [adminId, order.user_id]);
+      const amount = Number(order.amount_vnd);
+      const adminBalance = await this.adjustWallet(client, adminId, -amount);
+      const userBalance = await this.adjustWallet(
+        client,
+        order.user_id,
+        amount,
+      );
+      await this.insertLedger(
+        client,
+        adminId,
+        order.id,
+        'PREMIUM_REFUND',
+        'DEBIT',
+        amount,
+        adminBalance,
+        `Refund to customer: ${reason}`,
+      );
+      await this.insertLedger(
+        client,
+        order.user_id,
+        order.id,
+        'PREMIUM_REFUND',
+        'CREDIT',
+        amount,
+        userBalance,
+        `Internal refund: ${reason}`,
+      );
+      await client.query(
+        `UPDATE app_billing.payment_orders SET status = 'REFUNDED',
+           refunded_at = CURRENT_TIMESTAMP, cancel_reason = $2 WHERE id = $1`,
+        [order.id, reason],
+      );
+      if (order.order_type === 'PREMIUM_PURCHASE') {
+        await client.query(
+          `UPDATE app_billing.premium_subscriptions SET status = 'REFUNDED'
+           WHERE payment_order_id = $1`,
+          [order.id],
+        );
+        await this.refreshEntitlement(client, order.user_id);
+      }
+      return 'REFUNDED' as const;
+    });
+  }
+
+  async createOrder(input: {
+    userId: Uuid;
+    orderType: 'TOP_UP' | 'PREMIUM_PURCHASE';
+    amountVnd: number;
+    packageCode: string | null;
+    durationDays: number | null;
+    paymentCode: string;
+    ttlMinutes: number;
+  }) {
+    const result = await this.database.query<PaymentOrderRecord>(
+      `INSERT INTO app_billing.payment_orders
+         (user_id, order_type, premium_package, premium_duration_days,
+          amount_vnd, payment_code, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6,
+          CURRENT_TIMESTAMP + ($7::int * INTERVAL '1 minute'))
+       RETURNING id, user_id, order_type, premium_package, premium_duration_days,
+                 amount_vnd, status, payment_code, expires_at`,
+      [
+        input.userId,
+        input.orderType,
+        input.packageCode,
+        input.durationDays,
+        input.amountVnd,
+        input.paymentCode,
+        input.ttlMinutes,
+      ],
+    );
+    return result.rows[0];
+  }
+
+  async applySePayPayment(input: {
+    eventId: string;
+    paymentCode: string;
+    transferType: string;
+    transferAmount: number;
+    adminEmail: string;
+  }): Promise<PaymentSucceededNotification | null> {
+    if (!['in', 'credit'].includes(input.transferType.toLowerCase()))
+      return null;
+    return this.database.transaction(async (client) => {
+      const event = await client.query(
+        `INSERT INTO app_billing.sepay_webhook_events
+           (sepay_transaction_id, payment_code, amount_vnd)
+         VALUES ($1, $2, $3) ON CONFLICT (sepay_transaction_id) DO NOTHING
+         RETURNING sepay_transaction_id`,
+        [input.eventId, input.paymentCode, input.transferAmount],
+      );
+      if (!event.rowCount) return null;
+      const selected = await client.query<PaymentOrderRecord>(
+        `SELECT id, user_id, order_type, premium_package, premium_duration_days,
+                amount_vnd, status, payment_code, expires_at
+         FROM app_billing.payment_orders WHERE payment_code = $1 FOR UPDATE`,
+        [input.paymentCode],
+      );
+      const order = selected.rows[0];
+      if (
+        !order ||
+        order.status !== 'PENDING' ||
+        order.expires_at <= new Date() ||
+        Number(order.amount_vnd) !== input.transferAmount
+      ) {
+        await client.query(
+          `UPDATE app_billing.sepay_webhook_events SET processing_result = 'IGNORED'
+           WHERE sepay_transaction_id = $1`,
+          [input.eventId],
+        );
+        return null;
+      }
+      await client.query(
+        `UPDATE app_billing.payment_orders SET status = 'PAID', paid_at = CURRENT_TIMESTAMP,
+           sepay_transaction_id = $2 WHERE id = $1`,
+        [order.id, input.eventId],
+      );
+      const adminId = await this.findAdminId(client, input.adminEmail);
+      await this.lockWallets(client, [adminId, order.user_id]);
+      const amount = Number(order.amount_vnd);
+      const customerBalance = await this.adjustWallet(
+        client,
+        order.user_id,
+        amount,
+      );
+      await this.insertLedger(
+        client,
+        order.user_id,
+        order.id,
+        'SEPAY_TOP_UP',
+        'CREDIT',
+        amount,
+        customerBalance,
+        'SePay bank transfer received',
+      );
+      const collectionBalance = await this.adjustWallet(
+        client,
+        adminId,
+        amount,
+      );
+      await this.insertLedger(
+        client,
+        adminId,
+        order.id,
+        'SEPAY_COLLECTION',
+        'CREDIT',
+        amount,
+        collectionBalance,
+        `SePay collection ${order.payment_code}`,
+      );
+      if (order.order_type === 'PREMIUM_PURCHASE') {
+        const userBalance = await this.adjustWallet(
+          client,
+          order.user_id,
+          -amount,
+        );
+        const saleBalance = await this.adjustWallet(client, adminId, amount);
+        await this.insertLedger(
+          client,
+          order.user_id,
+          order.id,
+          'PREMIUM_PURCHASE',
+          'DEBIT',
+          amount,
+          userBalance,
+          `Premium package ${order.premium_package}`,
+        );
+        await this.insertLedger(
+          client,
+          adminId,
+          order.id,
+          'PREMIUM_SALE',
+          'CREDIT',
+          amount,
+          saleBalance,
+          `Premium sale ${order.payment_code}`,
+        );
+        await this.createSubscription(client, order);
+      }
+      await client.query(
+        `UPDATE app_billing.sepay_webhook_events SET processing_result = 'APPLIED'
+         WHERE sepay_transaction_id = $1`,
+        [input.eventId],
+      );
+      return {
+        userId: order.user_id,
+        orderId: order.id,
+        amountVnd: amount,
+        orderType: order.order_type,
+        packageCode: order.premium_package,
+      };
+    });
+  }
+
+  private async findAdminId(client: PoolClient, email: string) {
+    const result = await client.query<{ id: string }>(
+      `SELECT id FROM app_auth.users WHERE email = lower($1)
+         AND status = 'ACTIVE' AND deleted_at IS NULL FOR UPDATE`,
+      [email],
+    );
+    if (!result.rows[0]) throw new Error('PAYMENT_ADMIN_UNAVAILABLE');
+    return result.rows[0].id;
+  }
+
+  private async lockWallets(client: PoolClient, userIds: string[]) {
+    const ids = [...new Set(userIds)].sort();
+    for (const id of ids)
+      await client.query(
+        `INSERT INTO app_billing.wallets (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`,
+        [id],
+      );
+    await client.query(
+      'SELECT user_id FROM app_billing.wallets WHERE user_id = ANY($1::uuid[]) ORDER BY user_id FOR UPDATE',
+      [ids],
+    );
+  }
+
+  private async adjustWallet(
+    client: PoolClient,
+    userId: string,
+    amount: number,
+  ) {
+    const result = await client.query<{ balance_vnd: string }>(
+      `UPDATE app_billing.wallets SET balance_vnd = balance_vnd + $2
+       WHERE user_id = $1 AND balance_vnd + $2 >= 0 RETURNING balance_vnd`,
+      [userId, amount],
+    );
+    if (!result.rows[0]) throw new Error('WALLET_INSUFFICIENT_BALANCE');
+    return Number(result.rows[0].balance_vnd);
+  }
+
+  private insertLedger(
+    client: PoolClient,
+    userId: string,
+    orderId: string,
+    type: string,
+    direction: string,
+    amount: number,
+    balance: number,
+    description: string,
+  ) {
+    return client.query(
+      `INSERT INTO app_billing.wallet_transactions
+         (wallet_user_id, payment_order_id, transaction_type, direction,
+          amount_vnd, balance_after_vnd, description)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [userId, orderId, type, direction, amount, balance, description],
+    );
+  }
+
+  private async createSubscription(
+    client: PoolClient,
+    order: PaymentOrderRecord,
+  ) {
+    const active = await client.query<{ expires_at: Date }>(
+      `SELECT expires_at FROM app_billing.premium_subscriptions
+       WHERE user_id = $1 AND status = 'ACTIVE' AND expires_at > CURRENT_TIMESTAMP
+       ORDER BY expires_at DESC LIMIT 1 FOR UPDATE`,
+      [order.user_id],
+    );
+    const startsAt = active.rows[0]?.expires_at ?? new Date();
+    const expiresAt = new Date(startsAt);
+    expiresAt.setUTCDate(
+      expiresAt.getUTCDate() + Number(order.premium_duration_days),
+    );
+    await client.query(
+      `INSERT INTO app_billing.premium_subscriptions
+         (user_id, payment_order_id, package_code, starts_at, expires_at)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [order.user_id, order.id, order.premium_package, startsAt, expiresAt],
+    );
+    await client.query(
+      `INSERT INTO app_skin_analysis.user_analysis_entitlements
+         (user_id, plan, daily_quota) VALUES ($1, 'PREMIUM', NULL)
+       ON CONFLICT (user_id) DO UPDATE SET plan = 'PREMIUM', daily_quota = NULL,
+         updated_at = CURRENT_TIMESTAMP`,
+      [order.user_id],
+    );
+  }
+
+  private async refreshEntitlement(client: PoolClient, userId: string) {
+    const active = await client.query(
+      `SELECT 1 FROM app_billing.premium_subscriptions
+       WHERE user_id = $1 AND status = 'ACTIVE' AND expires_at > CURRENT_TIMESTAMP LIMIT 1`,
+      [userId],
+    );
+    if (!active.rowCount)
+      await client.query(
+        `INSERT INTO app_skin_analysis.user_analysis_entitlements (user_id, plan)
+         VALUES ($1, 'FREE') ON CONFLICT (user_id) DO UPDATE
+         SET plan = 'FREE', daily_quota = NULL, updated_at = CURRENT_TIMESTAMP`,
+        [userId],
+      );
+  }
+}

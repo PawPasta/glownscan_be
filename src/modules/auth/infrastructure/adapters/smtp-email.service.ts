@@ -1,9 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import nodemailer, { type Transporter } from 'nodemailer';
+import type { AuthenticationEmailPort } from '../../application/ports/authentication-email.port.js';
 
 @Injectable()
-export class SmtpEmailService {
+export class SmtpEmailService implements AuthenticationEmailPort {
   private readonly transporter: Transporter;
   private readonly from: string;
   private readonly frontendUrl: string;

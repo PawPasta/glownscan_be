@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ConfigService } from '@nestjs/config';
 import type { PoolClient } from 'pg';
 import { DatabaseService } from '../src/shared/database/database.service.js';
 import type { UploadIntentPort } from '../src/modules/cloudinary/application/ports/upload-intent.port.js';
+import type { CloudinaryProviderPort } from '../src/modules/cloudinary/application/ports/cloudinary-provider.port.js';
 import { CloudinaryUploadIntentService } from '../src/modules/cloudinary/application/use-case/cloudinary-upload-intent.service.js';
 import { PostgresUploadIntentAdapter } from '../src/modules/cloudinary/infrastructure/adapters/postgres-upload-intent.adapter.js';
 import { PostgresAuthenticationAdapter } from '../src/modules/auth/infrastructure/adapters/postgres-authentication.adapter.js';
@@ -61,7 +61,7 @@ describe('CloudinaryUploadIntentService', () => {
   const userId = 'c0a80101-0000-4000-8000-000000000001';
   let port: UploadIntentPort;
   let service: CloudinaryUploadIntentService;
-  let config: ConfigService;
+  let provider: CloudinaryProviderPort;
   let createAvatarUploadIntent: ReturnType<
     typeof vi.fn<UploadIntentPort['createIntent']>
   >;
@@ -81,12 +81,17 @@ describe('CloudinaryUploadIntentService', () => {
       consumeIntent,
       consumeAvatarIntent: completeAvatarUpload,
     };
-    config = new ConfigService({
-      GLOWNSCAN_CLOUDINARY_CLOUD_NAME: 'demo',
-      GLOWNSCAN_CLOUDINARY_API_KEY: 'api-key',
-      GLOWNSCAN_CLOUDINARY_API_SECRET: 'api-secret',
-    });
-    service = new CloudinaryUploadIntentService(port, config);
+    provider = {
+      getUploadCredentials: () => ({
+        cloudName: 'demo',
+        apiKey: 'api-key',
+        apiSecret: 'api-secret',
+      }),
+      sign: signCloudinaryParams,
+      verify: verifyCloudinarySignature,
+      isExpectedImageUrl: isExpectedCloudinaryUrl,
+    };
+    service = new CloudinaryUploadIntentService(port, provider);
   });
 
   it('creates a per-user signed upload intent and persists its expiry', async () => {
@@ -209,7 +214,7 @@ describe('CloudinaryUploadIntentService', () => {
     const consume = vi.fn<UploadIntentPort['consumeIntent']>();
     const isolatedService = new CloudinaryUploadIntentService(
       { ...port, consumeIntent: consume },
-      config,
+      provider,
     );
 
     await expect(

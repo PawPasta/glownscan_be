@@ -35,3 +35,12 @@ The current assessment is stored once per user in
 `app_skin_analysis.user_assessments`. It is distinct from
 `assessment_snapshots`, which will store an immutable copy associated with a
 specific skin-analysis session when those workflows are connected.
+
+## Product gaps
+
+- The questionnaire does not yet record explicit consent/version for using
+  self-reported answers to generate AI routine recommendations.
+- A routine draft must identify which assessment version and analysis session
+  produced it, so later assessment edits do not silently change its rationale.
+- Define how users can correct or delete answers and how that affects active
+  routine recommendations and derived records.

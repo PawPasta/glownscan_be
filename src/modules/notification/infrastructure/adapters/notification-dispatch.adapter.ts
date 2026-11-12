@@ -3,21 +3,15 @@ import { ConfigService } from '@nestjs/config';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import { getMessaging, type Messaging } from 'firebase-admin/messaging';
 import nodemailer, { type Transporter } from 'nodemailer';
-import { DatabaseService } from '../../../shared/database/database.service.js';
+import { DatabaseService } from '../../../../shared/database/database.service.js';
+import type { PaymentSucceededNotification } from '../../domain/entities/payment-succeeded-notification.entity.js';
+import type { NotificationDeliveryPort } from '../../application/ports/notification-delivery.port.js';
 
 const firebaseAppName = 'glownscan-notification';
 
-export interface PaymentSucceededNotification {
-  userId: string;
-  orderId: string;
-  amountVnd: number;
-  orderType: 'TOP_UP' | 'PREMIUM_PURCHASE';
-  packageCode: string | null;
-}
-
 @Injectable()
-export class NotificationService {
-  private readonly logger = new Logger(NotificationService.name);
+export class NotificationDispatchAdapter implements NotificationDeliveryPort {
+  private readonly logger = new Logger(NotificationDispatchAdapter.name);
   private readonly messaging: Messaging;
   private readonly transporter: Transporter;
   private readonly from: string;
@@ -46,8 +40,10 @@ export class NotificationService {
     });
   }
 
-  async notifyPaymentSucceeded(
+  async dispatchPaymentSucceeded(
     notification: PaymentSucceededNotification,
+    title: string,
+    body: string,
   ): Promise<void> {
     try {
       const [user, tokens] = await Promise.all([
@@ -65,8 +61,6 @@ export class NotificationService {
           [notification.userId],
         ),
       ]);
-      const title = 'Payment successful';
-      const body = paymentMessage(notification);
       const delivery = await Promise.allSettled([
         this.sendPush(
           tokens.rows.map((token) => token.registration_value),
@@ -132,13 +126,6 @@ export class NotificationService {
       html: `<p>${escapeHtml(body)}</p><p>Transaction ID: ${escapeHtml(notification.orderId)}</p>`,
     });
   }
-}
-
-function paymentMessage(notification: PaymentSucceededNotification): string {
-  const amount = new Intl.NumberFormat('en-US').format(notification.amountVnd);
-  return notification.orderType === 'TOP_UP'
-    ? `Your GlowScan wallet top-up of ${amount} VND was successful.`
-    : `Your ${notification.packageCode ?? 'PREMIUM'} payment of ${amount} VND was successful.`;
 }
 
 function escapeHtml(value: string): string {

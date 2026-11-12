@@ -1,5 +1,4 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { compare, hash } from 'bcryptjs';
 import { randomUUID } from 'node:crypto';
 import {
   BadRequestException,
@@ -57,8 +56,16 @@ import {
   type UserProfileUpdate,
   type ProfileSnapshot,
 } from '../ports/index.js';
-import { SmtpEmailService } from '../../infrastructure/adapters/smtp-email.service.js';
-import { TokenService, type TokenPayload } from './token.service.js';
+import {
+  AUTHENTICATION_EMAIL_PORT,
+  type AuthenticationEmailPort,
+} from '../ports/authentication-email.port.js';
+import { TokenService } from './token.service.js';
+import type { TokenPayload } from '../ports/token-runtime.port.js';
+import {
+  PASSWORD_HASHER_PORT,
+  type PasswordHasherPort,
+} from '../ports/password-hasher.port.js';
 
 interface RequestMetadata {
   ipAddress: string | null;
@@ -100,7 +107,10 @@ export class AuthenticationService {
     private readonly userProfilePort: UserProfilePort,
     @Inject(DEVICE_REGISTRATION_PORT)
     private readonly deviceRegistrationPort: DeviceRegistrationPort,
-    private readonly emailService: SmtpEmailService,
+    @Inject(AUTHENTICATION_EMAIL_PORT)
+    private readonly emailService: AuthenticationEmailPort,
+    @Inject(PASSWORD_HASHER_PORT)
+    private readonly passwordHasher: PasswordHasherPort,
     private readonly tokenService: TokenService,
   ) {}
 
@@ -129,7 +139,7 @@ export class AuthenticationService {
     const token = this.tokenService.createOpaqueToken();
     const registration: RegisterUserData = {
       email: email.value,
-      passwordHash: await hash(password.value, 12),
+      passwordHash: await this.passwordHasher.hash(password.value),
       verificationTokenHash: this.tokenService.hashToken(token),
       tokenExpiresAt: this.tokenService.expiryInHours(24),
     };
@@ -244,7 +254,7 @@ export class AuthenticationService {
     }
     if (
       user.passwordHash === null ||
-      !(await compare(input.password, user.passwordHash))
+      !(await this.passwordHasher.verify(input.password, user.passwordHash))
     ) {
       await this.loginPort.recordFailedLogin(user.email);
       throw new UnauthorizedException('Invalid email or password.');
@@ -482,7 +492,7 @@ export class AuthenticationService {
     const updated = await this.resetPasswordPort.resetPassword(
       parseEmail(input.email).value,
       this.tokenService.hashToken(input.token),
-      await hash(password.value, 12),
+      await this.passwordHasher.hash(password.value),
     );
     if (!updated) {
       throw new BadRequestException(
@@ -500,7 +510,7 @@ export class AuthenticationService {
     if (
       !user ||
       user.passwordHash === null ||
-      !(await compare(input.oldPassword, user.passwordHash))
+      !(await this.passwordHasher.verify(input.oldPassword, user.passwordHash))
     ) {
       throw new UnauthorizedException('Current password is incorrect.');
     }
@@ -513,7 +523,7 @@ export class AuthenticationService {
     const changed = await this.changePasswordPort.changePassword(
       user.id,
       user.passwordHash,
-      await hash(newPassword.value, 12),
+      await this.passwordHasher.hash(newPassword.value),
     );
     if (!changed) {
       throw new UnauthorizedException(

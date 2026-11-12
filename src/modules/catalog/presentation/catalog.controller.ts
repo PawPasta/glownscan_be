@@ -12,7 +12,7 @@ import {
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AdminGuard } from '../../../shared/security/admin.guard.js';
 import { JwtAuthGuard } from '../../../shared/security/jwt-auth.guard.js';
-import { CatalogService } from '../application/catalog.service.js';
+import { CatalogService } from '../application/use-case/catalog.service.js';
 import {
   CatalogStatusDto,
   CreateAffiliateLinkDto,

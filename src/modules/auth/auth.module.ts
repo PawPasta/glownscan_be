@@ -32,6 +32,13 @@ import { AdminGuard } from '../../shared/security/admin.guard.js';
 import { AdminAccountService } from './application/use-case/admin-account.service.js';
 import { AdminAccountController } from './presentation/admin-account.controller.js';
 import { DeviceController } from './presentation/device.controller.js';
+import { AUTHENTICATION_EMAIL_PORT } from './application/ports/authentication-email.port.js';
+import { ADMIN_ACCOUNT_PORT } from './application/ports/admin-account.port.js';
+import { PostgresAdminAccountAdapter } from './infrastructure/adapters/postgres-admin-account.adapter.js';
+import { TOKEN_RUNTIME_PORT } from './application/ports/token-runtime.port.js';
+import { JwtTokenRuntimeAdapter } from './infrastructure/adapters/jwt-token-runtime.adapter.js';
+import { PASSWORD_HASHER_PORT } from './application/ports/password-hasher.port.js';
+import { BcryptPasswordHasherAdapter } from './infrastructure/adapters/bcrypt-password-hasher.adapter.js';
 
 @Module({
   imports: [
@@ -138,10 +145,20 @@ import { DeviceController } from './presentation/device.controller.js';
     },
     AuthenticationService,
     TokenService,
+    JwtTokenRuntimeAdapter,
+    { provide: TOKEN_RUNTIME_PORT, useExisting: JwtTokenRuntimeAdapter },
     SmtpEmailService,
+    BcryptPasswordHasherAdapter,
+    { provide: PASSWORD_HASHER_PORT, useExisting: BcryptPasswordHasherAdapter },
+    {
+      provide: AUTHENTICATION_EMAIL_PORT,
+      useExisting: SmtpEmailService,
+    },
     JwtAuthGuard,
     AdminGuard,
     AdminAccountService,
+    PostgresAdminAccountAdapter,
+    { provide: ADMIN_ACCOUNT_PORT, useExisting: PostgresAdminAccountAdapter },
   ],
   exports: [AuthenticationService, JwtAuthGuard, JwtModule],
 })
