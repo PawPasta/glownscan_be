@@ -33,6 +33,7 @@ describe('GlobalExceptionFilter', () => {
       status: HttpStatus.CONFLICT,
       message: 'Email already exists',
       data: null,
+      code: 'HTTP_409',
     });
   });
 
@@ -57,6 +58,7 @@ describe('GlobalExceptionFilter', () => {
       status: HttpStatus.INTERNAL_SERVER_ERROR,
       message: 'Internal server error',
       data: null,
+      code: 'HTTP_500',
     });
     expect(json).not.toHaveBeenCalledWith(
       expect.objectContaining({ message: 'sensitive database detail' }),
@@ -91,6 +93,7 @@ describe('GlobalExceptionFilter', () => {
       status: HttpStatus.INTERNAL_SERVER_ERROR,
       message: 'Internal server error',
       data: null,
+      code: 'HTTP_500',
     });
   });
 
@@ -124,6 +127,7 @@ describe('GlobalExceptionFilter', () => {
       status: 429,
       message: 'Try later',
       data: null,
+      code: 'HTTP_429',
     });
   });
 
@@ -145,6 +149,7 @@ describe('GlobalExceptionFilter', () => {
       message: 'Access token has expired.',
       data: null,
       errorCode: 'ACCESS_TOKEN_EXPIRED',
+      code: 'ACCESS_TOKEN_EXPIRED',
     });
   });
 });

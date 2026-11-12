@@ -39,11 +39,13 @@ import { TOKEN_RUNTIME_PORT } from './application/ports/token-runtime.port.js';
 import { JwtTokenRuntimeAdapter } from './infrastructure/adapters/jwt-token-runtime.adapter.js';
 import { PASSWORD_HASHER_PORT } from './application/ports/password-hasher.port.js';
 import { BcryptPasswordHasherAdapter } from './infrastructure/adapters/bcrypt-password-hasher.adapter.js';
+import { AuditModule } from '../audit/audit.module.js';
 
 @Module({
   imports: [
     ConfigModule,
     DatabaseModule,
+    AuditModule,
     RateLimitModule,
     CloudinaryModule,
     JwtModule.registerAsync({

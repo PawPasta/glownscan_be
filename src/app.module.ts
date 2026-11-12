@@ -9,6 +9,8 @@ import { PaymentModule } from './modules/payment/payment.module.js';
 import { CatalogModule } from './modules/catalog/catalog.module.js';
 import { RecommendationModule } from './modules/recommendation/recommendation.module.js';
 import { validateEnvironment } from './shared/config/environment.validation.js';
+import { AuditModule } from './modules/audit/audit.module.js';
+import { RoutineModule } from './modules/routine/routine.module.js';
 
 @Module({
   imports: [
@@ -24,6 +26,8 @@ import { validateEnvironment } from './shared/config/environment.validation.js';
     PaymentModule,
     CatalogModule,
     RecommendationModule,
+    AuditModule,
+    RoutineModule,
   ],
   controllers: [HealthController],
   providers: [],

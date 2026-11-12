@@ -9,6 +9,46 @@ export interface ActivePremiumPackage {
   durationDays: number;
 }
 
+export interface PremiumPackageOffer extends Omit<
+  ActivePremiumPackage,
+  'amountVnd'
+> {
+  name: string;
+  description: string;
+  priceVnd: number;
+  displayOrder: number;
+  isActive: true;
+}
+
+export interface SubscriptionSnapshot {
+  isPremium: boolean;
+  packageCode: string | null;
+  startedAt: Date | null;
+  expiresAt: Date | null;
+  status: 'ACTIVE' | 'EXPIRED' | 'CANCELLED' | 'NONE';
+}
+
+export interface PaymentOrderListItem {
+  id: string;
+  type: 'TOP_UP' | 'PREMIUM_PURCHASE';
+  packageCode: string | null;
+  amountVnd: number;
+  status: string;
+  paymentCode: string;
+  createdAt: Date;
+  expiresAt: Date;
+  paidAt: Date | null;
+}
+
+export interface AdminPaymentOrderListItem extends PaymentOrderListItem {
+  userId: string;
+  userEmail: string;
+  receivedAmountVnd: number;
+  providerReference: string | null;
+  reconciliationStatus:
+    'MATCHED' | 'UNMATCHED' | 'PARTIAL' | 'OVERPAID' | 'LATE' | 'MANUAL_REVIEW';
+}
+
 export interface PaymentOrderRecord {
   id: string;
   user_id: string;
@@ -23,12 +63,52 @@ export interface PaymentOrderRecord {
 
 export interface PaymentDataPort {
   findActivePackage(code: string): Promise<ActivePremiumPackage | null>;
+  listActivePackages(): Promise<PremiumPackageOffer[]>;
+  findSubscription(userId: Uuid): Promise<SubscriptionSnapshot>;
   getOrCreateWallet(userId: Uuid): Promise<{ balanceVnd: number }>;
   listTransactions(
     userId: Uuid,
     page: number,
     limit: number,
   ): Promise<unknown[]>;
+  listOwnedOrders(
+    userId: Uuid,
+    page: number,
+    limit: number,
+  ): Promise<{
+    items: PaymentOrderListItem[];
+    page: number;
+    limit: number;
+    total: number;
+  }>;
+  listAdminOrders(
+    page: number,
+    limit: number,
+    status?: string,
+  ): Promise<{
+    items: AdminPaymentOrderListItem[];
+    page: number;
+    limit: number;
+    total: number;
+  }>;
+  adminDashboardSummary(): Promise<{
+    pendingOrders: number;
+    paidOrdersToday: number;
+    walletBalanceTotalVnd: number;
+    activePremiumSubscribers: number;
+    failedPaymentNotifications: number;
+  }>;
+  createSupportRequest(input: {
+    userId: Uuid;
+    orderId: string;
+    subject: string;
+    note: string;
+  }): Promise<{
+    id: string;
+    orderId: string;
+    status: 'OPEN';
+    createdAt: Date;
+  } | null>;
   cancelPendingOrder(
     userId: Uuid,
     orderId: string,

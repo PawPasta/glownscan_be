@@ -15,10 +15,10 @@ matched product cards; Flutter should not call admin catalog APIs.
 
 All user identity and ownership are derived from the access token. Do not send
 `userId` to select an owner. Protected endpoints use `Authorization: Bearer
-<accessToken>`. Most responses use `{ status, message, data }`; analysis
-creation returns HTTP 202 with the same envelope. Errors use the backend error
-envelope and stable error codes where defined. Unknown request fields are
-rejected.
+<accessToken>`. Success responses use `{ status, message, data }`; analysis
+creation returns HTTP 202 with the same envelope. Errors include a stable
+`code`; `errorCode` remains as a compatibility alias for previously coded
+errors. Unknown request fields are rejected.
 
 ## Account and session
 
@@ -82,7 +82,10 @@ After login, `PUT /devices/me` syncs the token:
 {
   "installationId": "<stable-app-installation-id>",
   "platform": "ANDROID",
-  "fcmToken": "<firebase-messaging-token>"
+  "fcmToken": "<firebase-messaging-token>",
+  "appVersion": "1.2.0",
+  "locale": "vi-VN",
+  "timezone": "Asia/Ho_Chi_Minh"
 }
 ```
 
@@ -156,7 +159,7 @@ routes normally return HTTP 201 and message `Created successfully`).
 | `POST /auth/refresh`                                                                                                                                                                                             | `{ "accessToken": "<jwt>", "refreshToken": "<rotated-opaque-token>", "expiresIn": 900 }` (`expiresIn` is seconds; use configured runtime value).                                                                                                                       |
 | `GET /auth/profile`, `PATCH /auth/profile`, `POST /auth/profile/avatar/confirm`                                                                                                                                  | `{ "profile": { "id": "<uuid>", "userId": "<uuid>", "fullName": "Nguyen An", "avatarUrl": "https://...", "dateOfBirth": "1998-04-12", "gender": "PREFER_NOT_TO_SAY", "createdAt": "<ISO-8601>", "updatedAt": "<ISO-8601>" } }`; nullable profile fields may be `null`. |
 | `POST /auth/profile/avatar/upload-intent`                                                                                                                                                                        | `{ "publicId": "glownscan/avatars/...", "timestamp": 1234567890, "signature": "<signature>", "apiKey": "<cloudinary-api-key>", "cloudName": "<cloud-name>" }`                                                                                                          |
-| `PUT /devices/me`                                                                                                                                                                                                | `{ "message": "Device registration synchronized." }`                                                                                                                                                                                                                   |
+| `PUT /devices/me`                                                                                                                                                                                                | `{ "installationId": "<stable-installation-id>", "registered": true, "updatedAt": "<ISO-8601>" }`                                                                                                                                                                                                                   |
 | `DELETE /devices/me`                                                                                                                                                                                             | No response data (`undefined`; JSON serialization omits the `data` field).                                                                                                                                                                                             |
 
 The API response envelope's `status` is the HTTP status code, not a separate
@@ -301,25 +304,132 @@ use the same session shape as status polling.
 The response is wrapped in the common envelope; recommendation `items` are
 matched product cards, not a persisted routine or medical advice.
 
+## Routine lifecycle and daily completion
+
+| Method | Route | Status | Purpose |
+| --- | --- | --- | --- |
+| POST | `/routines/draft` | Implemented | Create a draft from caller assessment, latest eligible successful analysis, and matched active products. One current routine per user. |
+| GET | `/routines/current` | Implemented | Return caller's current routine or `null`. |
+| PATCH | `/routines/:id` | Implemented | Edit title and steps for an owned non-completed routine. |
+| POST | `/routines/:id/activate` | Implemented | Activate a draft or resume a paused routine. |
+| POST | `/routines/:id/pause` | Implemented | Pause an active routine. |
+| POST | `/routines/:id/complete` | Implemented | Complete/archive an owned routine. |
+| GET | `/routines/current/today` | Implemented | Load today's progress (server UTC date). |
+| PUT | `/routines/current/check-ins/:date` | Implemented | Idempotently upsert step completion and note. |
+| GET | `/routines/current/check-ins?from=&to=` | Implemented | Load check-in history over inclusive ISO dates. |
+
+`POST /routines/draft`:
+
+Send a required `Idempotency-Key` header (unique per logical draft request;
+reuse only for a retry with identical body):
+
+```json
+{
+  "analysisSessionId": null,
+  "preferences": { "morning": true, "evening": true, "maxStepsPerRoutine": 4 }
+}
+```
+
+`analysisSessionId` is optional; if supplied, it must belong to the caller and
+be successful. Otherwise the latest successful analysis is used when present.
+At least one period is required; `maxStepsPerRoutine` is 1–8. The current
+generator uses deterministic general-wellness templates and eligible catalog
+matching; it does not call an LLM. It is not medical advice.
+Repeating the same key and payload returns the same routine; using the same key
+with another payload returns HTTP 409 with `code: "IDEMPOTENCY_KEY_CONFLICT"`.
+A second active/draft routine with a different key returns
+`ROUTINE_ALREADY_EXISTS`; invalid lifecycle transitions return
+`ROUTINE_INVALID_TRANSITION`.
+
+`PATCH /routines/:id` accepts an optional `title`, `morningSteps`, and/or
+`eveningSteps`. Each step has `id` (optional), `period` (`MORNING` or
+`EVENING`), positive integer `position`, `title`, `instruction`, `optional`,
+and optional `product` card. Routine data includes `id`, `title`, `status`
+(`DRAFT`, `ACTIVE`, `PAUSED`, `COMPLETED`), both step arrays and timestamps.
+Transition endpoints have no body.
+
+Routine response `data` example:
+
+```json
+{
+  "id": "<routine-uuid>", "title": "Personalized skin routine", "status": "DRAFT",
+  "morningSteps": [{ "id": "<step-uuid>", "period": "MORNING", "position": 1, "title": "Cleanse", "instruction": "Gently cleanse your face and pat dry.", "optional": false, "product": null }],
+  "eveningSteps": [], "createdAt": "<ISO-8601>", "updatedAt": "<ISO-8601>",
+  "activatedAt": null, "completedAt": null
+}
+```
+
+Daily check-in body:
+
+```json
+{ "completedStepIds": ["<step-uuid>"], "note": "Skin felt dry today" }
+```
+
+The path date is `YYYY-MM-DD`; step IDs must belong to the caller's active
+routine. Response data contains `date`, `completedStepIds`,
+`completionPercent`, and `streakDays`. History returns `{ "items": [...] }`.
+
+## Product detail and notification inbox
+
+| Method | Route | Status | Purpose |
+| --- | --- | --- | --- |
+| GET | `/products/:id` | Implemented | Mobile product detail and affiliate handoff; public read only. |
+| GET/PATCH | `/notification-preferences` | Implemented | Read/update caller's notification settings. |
+| GET | `/notifications?page=&limit=` | Implemented | Paginated inbox `{ items, total }`. |
+| PATCH | `/notifications/:id/read` | Implemented | Mark one owned entry read. |
+| POST | `/notifications/read-all` | Implemented | Mark all caller's unread entries read. |
+
+`PATCH /notification-preferences` accepts a partial object:
+
+```json
+{
+  "routineReminders": true,
+  "analysisUpdates": true,
+  "productRecommendations": false,
+  "marketing": false,
+  "reminderTime": "20:30",
+  "timezone": "Asia/Ho_Chi_Minh"
+}
+```
+
+Preferences response data echoes the six preference fields and `updatedAt`.
+`GET /notifications` data is `{ "items": [{ "id", "type", "title",
+"body", "payload", "readAt", "createdAt" }], "total": 0 }`. Mark-one
+returns `{ "id": "<notification-uuid>", "read": true }`; mark-all returns
+`{ "updatedCount": 0 }`.
+
+Product detail contains `id`, `name`, `brand`, `description`, ingredient
+names, `usageInstructions`, `warnings`, `imageUrls`, `externalUrl`, and
+`affiliateDisclosure`. Catalog currently does not persist usage instructions
+or warnings, so these are `null` and `[]` until catalog schema support is
+added. `externalUrl` is the first active affiliate URL or `null`.
+
+Product detail response data example:
+
+```json
+{
+  "id": "<product-uuid>", "name": "Daily Moisturizer", "brand": "Example",
+  "description": "Lightweight moisturizer", "ingredients": ["Niacinamide"],
+  "usageInstructions": null, "warnings": [], "imageUrls": ["https://..."],
+  "externalUrl": "https://...", "affiliateDisclosure": "This product link may be an affiliate link."
+}
+```
+
 ## Missing Flutter APIs / contracts
 
-- Routine lifecycle: generate/persist a recommendation draft from assessment,
-  analysis, and eligible catalog data; get/list drafts; accept, edit, reject;
-  create/update/pause/complete a routine; daily step check-ins and history.
 - Google Calendar connection for the routine owner: OAuth start/callback or
   native authorization exchange, connection status/disconnect, and idempotent
   sync/retry. A Gmail address alone must never be used as calendar write
   authorization. Calendar sync is optional and separate from routine
   acceptance.
-- Recommendation response lacks affiliate-link details and detailed product
-  data for a mobile product detail/purchase handoff; define whether Flutter
-  should use public catalog read routes or receive a richer recommendation
-  response. By the current product boundary, admin catalog routes remain
-  website-only.
-- Analysis deletion/retry/reporting and account export/deletion APIs are not
-  available; define ownership and retention policy before adding them.
-- Notification preference/history APIs are not available. Current mobile
-  device registration supports payment-success FCM delivery only.
+- Analysis retry, source-photo deletion, reporting, and retention status APIs
+  remain unavailable. These need an explicit retention and provider-delete /
+  reconciliation policy; deleting a session row alone is not image deletion.
+- Account export/deletion workflows remain unavailable until coordinated
+  retention rules for billing/audit data, Cloudinary assets, devices, routines,
+  and analysis records are defined.
+- Reminder/analysis-update scheduling is not implemented; notification
+  preferences persist, while delivery currently covers payment success.
 - Payment and subscription APIs are intentionally assigned to the website by
   the current product boundary. If Flutter must buy/renew Premium, that is a
   product-contract change and requires reassigning the payment endpoints, not

@@ -2,20 +2,20 @@
 
 GlowScan is a personalized skincare application. This repository contains the backend API intended to support the mobile app and admin dashboard.
 
-> **Implementation status:** The backend includes authentication, profiles, persisted skin assessments and analysis history, Redis/BullMQ background skin analysis, PostgreSQL integration, wallet-backed `PREMIUM` payments via SePay, product catalog administration, and personalized catalog recommendations. Payment confirmation can notify registered mobile devices and email recipients. Routines and progress tracking remain planned.
+> **Implementation status:** The backend includes website and mobile authentication, profiles, skin assessments, asynchronous skin analysis, deterministic product recommendations, mobile routines/check-ins, notification preferences and inbox, public/admin catalog APIs, SePay wallet payments, and admin audit records. Google Calendar sync, scheduled reminders, and account/analysis privacy workflows are not implemented yet; see [Known gaps and planned work](#known-gaps-and-planned-work).
 
 ## Product flows
 
-The backend currently supports the following initial user journeys; items described as planned are not available yet.
+The backend currently supports the following user journeys. The API contracts are documented separately for [Flutter](docs/api/FLUTTER_API.md) and the [website](docs/api/WEBSITE_API.md).
 
 ### 1. Account setup and personalization
 
 ```text
-Open app
-  → Register or log in
-  → Complete skin assessment
-  → Review and save assessment
-  → View personalized home
+Register / log in on web or mobile
+  → Verify email when required
+  → Load or update profile
+  → Save the versioned skin assessment
+  → On mobile, register the FCM token after login
 ```
 
 Account, profile, and the versioned skin-assessment questionnaire provide the
@@ -24,37 +24,50 @@ starting point for a user's skin profile and later recommendations.
 ### 2. Skin analysis and skincare guidance
 
 ```text
-Capture or upload facial image
-  → Validate image and face visibility
-      ├─ Invalid → Explain the issue → Try another image
-      └─ Valid
-          → Analyze observable skin characteristics
-          → Save analysis result
-          → Show the saved result and catalog matches
+Request a one-time upload intent
+  → Upload directly to Cloudinary
+  → Submit verified metadata with Idempotency-Key
+  → Receive 202 + analysis session ID
+  → Outbox dispatcher enqueues a BullMQ job
+  → Worker validates image/result and calls Gemini
+  → Poll owned status/history endpoints
+  → View result and matched catalog products
 ```
 
-Analysis history can be used to review saved results over time.
-`GET /recommendations/me` currently returns deterministic catalog product
-matches from assessment concerns and eligible analysis metrics. AI-generated
-routine drafts, user acceptance, schedules, check-ins, and Google Calendar sync
-are not implemented. See [Recommendations](docs/business/Recommendation.md)
-for the proposed workflow and current gaps.
+Analysis creation is idempotent and does not wait for Gemini. The persisted
+session/outbox supports worker restarts and duplicate queue delivery. History
+and result reads are scoped to the authenticated user. `GET
+/recommendations/me` returns deterministic product matches from assessment
+concerns and eligible analysis metrics; it does not call an LLM to generate
+product recommendations.
 
 ### 3. Routine and progress tracking
 
 ```text
-Open routine
-  → View morning/evening steps
-  → Check in completed steps
-  → Review routine history
-
-Run a new skin analysis
-  → Add result to analysis history
-  → Compare with an earlier result
-  → Review changes over time
+Generate an idempotent routine draft using assessment data and an optional or latest eligible analysis
+  → Review/edit morning and evening steps
+  → Activate, pause, or complete the routine
+  → Upsert daily completed-step check-ins
+  → Read today's progress or check-in history
 ```
 
-### 4. Premium access
+Routine steps currently come from a built-in deterministic template, with
+eligible catalog product matching; routine generation does not call Gemini.
+Google Calendar integration and scheduled reminders are not available.
+
+### 4. Notifications
+
+```text
+Read/update notification preferences
+  → Receive payment-success notification in the inbox
+  → Read one notification or mark all as read
+```
+
+Payment success is written to the inbox and dispatched by email/FCM on a
+best-effort basis. The preference CRUD API is implemented, but preference-based
+suppression and routine/analysis reminder delivery are not wired yet.
+
+### 5. Premium access
 
 ```text
 View Premium plans
@@ -71,7 +84,7 @@ internal wallet and, for a package purchase, immediately pays the package and
 extends the user's `PREMIUM` subscription. The specific premium product
 capabilities remain to be defined.
 
-### 5. Product catalog administration
+### 6. Product catalog and administration
 
 ```text
 Admin signs in
@@ -81,10 +94,43 @@ Admin signs in
   → Maintain affiliate links
 ```
 
-The catalog exposes public read endpoints and `ADMIN`-only CRUD for products,
-ingredients, skin concerns, affiliate links, and administrator account
-management. Purchases through affiliate links take place on external
-marketplaces, not in GlowScan.
+The catalog exposes public read endpoints (including product details for
+mobile) and `ADMIN`-only CRUD for products, ingredients, skin concerns,
+affiliate links, and managed accounts. Admin actions are recorded in the audit
+log. Purchases through affiliate links take place on external marketplaces,
+not in GlowScan.
+
+## Known gaps and planned work
+
+These are intentionally identified as follow-up work; the current Flutter and
+website flows can operate without them, but product/privacy/operations work is
+needed before treating them as complete:
+
+- **Google Calendar:** routine-owner OAuth/authorization, connection management,
+  and idempotent event sync are not implemented. A saved Gmail address alone
+  is not authorization to write to that person's calendar.
+- **Routine reminders and notification preferences:** preference read/update
+  and inbox APIs exist, but scheduled reminders and enforcement of channel
+  preferences are not implemented. Analysis-update and recommendation
+  notifications are also not delivered.
+- **Analysis privacy/recovery:** retry, delete, report-result, account export,
+  account deletion, and a complete image-retention/deletion workflow are not
+  available. Define retention and consent handling before production rollout.
+- **Product content:** mobile product detail currently returns empty warnings
+  and `usageInstructions: null`; those fields are not stored in the catalog.
+- **Payment operations:** the admin view does not yet provide an unmatched
+  SePay-event inbox or operator decisions for partial, overpaid, or late
+  transfers. Verify the exact provider webhook payload against the DTO before
+  enabling the live SePay integration.
+- **Web session hardening:** web refresh remains body-based. HttpOnly cookie,
+  CSRF, and credentialed CORS session flows are not implemented.
+- **Premium entitlements:** package purchase and subscription state are
+  implemented, but the product capabilities gated by `PREMIUM` still need a
+  defined policy.
+
+See the [Flutter API contract](docs/api/FLUTTER_API.md),
+[Website API contract](docs/api/WEBSITE_API.md), and relevant
+[business workflows](docs/business/) for endpoint-level details.
 
 ## Flow and requirements diagrams
 
@@ -311,7 +357,9 @@ src/modules/auth/
 
 src/modules/skin-analysis/   # Assessments, Cloudinary verification, Gemini analysis, result persistence
 src/modules/payment/         # SePay webhook, VietQR orders, wallets, and PREMIUM entitlement
-src/modules/notification/    # FCM and email payment-confirmation delivery
+src/modules/routine/         # Routine lifecycle and daily check-ins
+src/modules/notification/    # Payment delivery, mobile inbox, and preferences
+src/modules/audit/           # Admin action audit records
 src/shared/                  # API, configuration, database, errors, security, types
 database/                # Versioned migrations and explicit admin bootstrap
 test/                    # Unit and end-to-end tests
@@ -382,35 +430,46 @@ The auth `Password` value object requires at least six characters, including an 
 
 ### Implemented endpoint
 
-| Method   | Endpoint                       | Response                                                               |
-| -------- | ------------------------------ | ---------------------------------------------------------------------- |
-| `GET`    | `/health/database`             | `{"status":"ok","database":"connected"}`                               |
-| `GET`    | `/health/live`                 | Process liveness probe                                                 |
-| `GET`    | `/health/ready`                | Dependency readiness probe                                             |
-| `POST`   | `/auth/register`               | Create a pending user with the `USER` role and send email verification |
-| `POST`   | `/auth/verify-email`           | Verify a registration token using `{ "email", "token" }`               |
-| `POST`   | `/auth/verify-email/resend`    | Resend a verification link without revealing account status            |
-| `POST`   | `/auth/login`                  | Return a JWT access token and opaque refresh token                     |
-| `POST`   | `/auth/firebase/login`         | Verify a Firebase ID token, link/create the account, and return tokens |
-| `POST`   | `/auth/firebase/mobile/login`  | Firebase mobile login; also register the device FCM token              |
-| `PUT`    | `/devices/me`                  | Upsert the caller's FCM token for a stable installation ID             |
-| `DELETE` | `/devices/me`                  | Disable notifications for the caller's installation ID                 |
-| `POST`   | `/auth/refresh`                | Rotate a refresh token and return a new access/refresh token pair      |
-| `POST`   | `/auth/logout`                 | Revoke the refresh token family                                        |
-| `POST`   | `/auth/password/reset/request` | Send a reset link without revealing whether the email exists           |
-| `POST`   | `/auth/password/reset/confirm` | Reset using `{ "email", "token", "newPassword" }`                      |
-| `POST`   | `/auth/password/change`        | Authenticated; verify `oldPassword`, set `newPassword`                 |
-| `GET`    | `/skin-assessments/current`    | Return the caller's current questionnaire or `null`                    |
-| `PUT`    | `/skin-assessments/current`    | Validate and save the caller's questionnaire                           |
-| `POST`   | `/skin-analysis/upload-intent` | Create a one-time owned Cloudinary upload intent                       |
-| `POST`   | `/skin-analysis/analyze`       | Verify upload and return `202` queued analysis session                 |
-| `GET`    | `/skin-analysis`               | Return the caller's paginated analysis history                         |
-| `GET`    | `/skin-analysis/:analysisId`   | Return an analysis only when it belongs to the caller                  |
-| `POST`   | `/payment/top-ups`             | Create a VietQR-backed internal-wallet top-up                          |
-| `POST`   | `/payment/premium-checkouts`   | Create a VietQR-backed `PREMIUM` package checkout                      |
-| `GET`    | `/payment/orders/:orderId`     | Return an owned payment order                                          |
-| `GET`    | `/payment/wallet`              | Return the caller's wallet and ledger                                  |
-| `POST`   | `/payment/webhook`             | Receive authenticated SePay payment confirmation                       |
+| Method      | Endpoint                                                       | Response                                                               |
+| ----------- | -------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `GET`       | `/health/database`                                             | `{"status":"ok","database":"connected"}`                               |
+| `GET`       | `/health/live`                                                 | Process liveness probe                                                 |
+| `GET`       | `/health/ready`                                                | Dependency readiness probe                                             |
+| `POST`      | `/auth/register`                                               | Create a pending user with the `USER` role and send email verification |
+| `POST`      | `/auth/verify-email`                                           | Verify a registration token using `{ "email", "token" }`               |
+| `POST`      | `/auth/verify-email/resend`                                    | Resend a verification link without revealing account status            |
+| `POST`      | `/auth/login`                                                  | Return a JWT access token and opaque refresh token                     |
+| `POST`      | `/auth/firebase/login`                                         | Verify a Firebase ID token, link/create the account, and return tokens |
+| `POST`      | `/auth/mobile/login`, `/auth/firebase/mobile/login`            | Mobile login; FCM registration is a separate post-login request        |
+| `PUT`       | `/devices/me`                                                  | Upsert the caller's FCM token for a stable installation ID             |
+| `DELETE`    | `/devices/me`                                                  | Disable notifications for the caller's installation ID                 |
+| `POST`      | `/auth/refresh`                                                | Rotate a refresh token and return a new access/refresh token pair      |
+| `POST`      | `/auth/logout`                                                 | Revoke the refresh token family                                        |
+| `POST`      | `/auth/password/reset/request`                                 | Send a reset link without revealing whether the email exists           |
+| `POST`      | `/auth/password/reset/confirm`                                 | Reset using `{ "email", "token", "newPassword" }`                      |
+| `POST`      | `/auth/password/change`                                        | Authenticated; verify `oldPassword`, set `newPassword`                 |
+| `GET`       | `/skin-assessments/current`                                    | Return the caller's current questionnaire or `null`                    |
+| `PUT`       | `/skin-assessments/current`                                    | Validate and save the caller's questionnaire                           |
+| `POST`      | `/skin-analysis/upload-intent`                                 | Create a one-time owned Cloudinary upload intent                       |
+| `POST`      | `/skin-analysis/analyze`                                       | Verify upload and return `202` queued analysis session                 |
+| `GET`       | `/skin-analysis`                                               | Return the caller's paginated analysis history                         |
+| `GET`       | `/skin-analysis/:analysisId`                                   | Return an analysis only when it belongs to the caller                  |
+| `GET`       | `/recommendations/me`                                          | Return assessment/analysis-matched catalog product cards               |
+| `GET`       | `/products/:id`                                                | Return mobile product details and affiliate handoff                    |
+| `POST`      | `/routines/draft`                                              | Create an idempotent routine draft from eligible user data             |
+| `GET/PATCH` | `/routines/current`, `/routines/:id`                           | Read or edit the caller's current routine                              |
+| `POST`      | `/routines/:id/activate`, `/pause`, `/complete`                | Transition an owned routine through supported states                   |
+| `GET/PUT`   | `/routines/current/today`, `/routines/current/check-ins/:date` | Read or upsert daily progress                                          |
+| `GET`       | `/routines/current/check-ins`                                  | Read bounded check-in history                                          |
+| `GET/PATCH` | `/notification-preferences`                                    | Read or update the caller's notification preferences                   |
+| `GET`       | `/notifications`                                               | Return paginated inbox items                                           |
+| `PATCH`     | `/notifications/:id/read`                                      | Mark an owned notification as read                                     |
+| `POST`      | `/notifications/read-all`                                      | Mark all of the caller's notifications as read                         |
+| `POST`      | `/payment/top-ups`                                             | Create a VietQR-backed internal-wallet top-up                          |
+| `POST`      | `/payment/premium-checkouts`                                   | Create a VietQR-backed `PREMIUM` package checkout                      |
+| `GET`       | `/payment/orders/:orderId`                                     | Return an owned payment order                                          |
+| `GET`       | `/payment/wallet`                                              | Return the caller's wallet and ledger                                  |
+| `POST`      | `/payment/webhook`                                             | Receive authenticated SePay payment confirmation                       |
 
 All POST request bodies are validated; unknown fields are rejected. Passwords are bcrypt-hashed and limited to 72 UTF-8 bytes to match bcrypt's input limit. Verification and reset tokens are random, single-use, expire, and are stored only as SHA-256 hashes. Refresh tokens are opaque, rotated on use, and stored hashed in `app_auth.refresh_tokens` (not `action_tokens`). Password changes invalidate existing access tokens and revoke refresh sessions. Five consecutive failed login attempts lock the account for 15 minutes. Password-reset requests always return the same message whether or not the account exists.
 
@@ -445,8 +504,10 @@ The initial migration sequence is:
 | V007    | Versioned user skin-assessment questionnaire                                                                  |
 | V008    | Product catalog, ingredients, skin concerns, and affiliate links                                              |
 | V009    | 100 replaceable Lorem demo catalog products                                                                   |
+| V010    | Payment support requests, notification delivery attempts, and admin audit records                             |
+| V011    | Mobile routines/check-ins, notification inbox/preferences, and device metadata                                |
 
-Add a new `V<number>__description.sql` file for future changes; do not edit a migration after it has been applied. The runner detects missing or modified applied migrations and stops with an error. The current V001–V009 set requires a clean schema. `npm run db:migrate:reset` drops the application schemas (`app_auth`, `app_cloudinary`, `app_skin_analysis`, `app_billing`, `app_catalog`), the legacy `app_profile` schema, and `public.schema_migrations`, then reapplies all migrations. It does not drop unrelated schemas, but is destructive and has no confirmation guard; verify `GLOWNSCAN_DATABASE_URL` and use only for demo/development data. Never run it against production or a database whose data must be retained. If the old combined SQL script was already run, do not apply these migrations blindly; back up and baseline that database deliberately.
+Add a new `V<number>__description.sql` file for future changes; do not edit a migration after it has been applied. The runner detects missing or modified applied migrations and stops with an error. The V001–V011 sequence is intended for a clean schema. **The current `db:migrate:reset` helper has not yet been updated to drop `app_routines` and `app_notifications` created by V011**, so do not use that helper to reset a database after V011 has been applied; use a deliberately provisioned clean development database until reset support is updated. Reset is destructive and has no confirmation guard; never run it against production or data that must be retained. If the old combined SQL script was already run, do not apply these migrations blindly; back up and baseline that database deliberately.
 
 The migration role should be separate from the application's runtime credentials. The schemas enable row-level security and revoke access from `PUBLIC`; configure the required database grants and RLS policies for the runtime role as part of application integration.
 

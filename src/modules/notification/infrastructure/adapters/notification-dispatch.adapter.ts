@@ -61,26 +61,76 @@ export class NotificationDispatchAdapter implements NotificationDeliveryPort {
           [notification.userId],
         ),
       ]);
-      const delivery = await Promise.allSettled([
-        this.sendPush(
-          tokens.rows.map((token) => token.registration_value),
-          title,
-          body,
-          notification,
+      await Promise.all([
+        this.trackDelivery(
+          notification.orderId,
+          'FCM',
+          tokens.rows.length === 0,
+          () =>
+            this.sendPush(
+              tokens.rows.map((token) => token.registration_value),
+              title,
+              body,
+              notification,
+            ),
         ),
-        this.sendEmail(user.rows[0]?.email, title, body, notification),
+        this.trackDelivery(
+          notification.orderId,
+          'EMAIL',
+          !user.rows[0]?.email,
+          () => this.sendEmail(user.rows[0]?.email, title, body, notification),
+        ),
       ]);
-      for (const result of delivery) {
-        if (result.status === 'rejected') {
-          this.logger.error(
-            'Payment notification delivery failed.',
-            result.reason instanceof Error ? result.reason.stack : undefined,
-          );
-        }
-      }
     } catch (error) {
+      await Promise.all([
+        this.recordAttempt(notification.orderId, 'FCM', 'FAILED'),
+        this.recordAttempt(notification.orderId, 'EMAIL', 'FAILED'),
+      ]);
       this.logger.error(
         'Payment notification could not be prepared.',
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
+  }
+
+  private async trackDelivery(
+    orderId: string,
+    channel: 'FCM' | 'EMAIL',
+    skipped: boolean,
+    send: () => Promise<void>,
+  ) {
+    let status: 'SUCCEEDED' | 'FAILED' | 'SKIPPED' = skipped
+      ? 'SKIPPED'
+      : 'SUCCEEDED';
+    if (!skipped) {
+      try {
+        await send();
+      } catch (error) {
+        status = 'FAILED';
+        this.logger.error(
+          'Payment notification delivery failed.',
+          error instanceof Error ? error.stack : undefined,
+        );
+      }
+    }
+    await this.recordAttempt(orderId, channel, status);
+    return status;
+  }
+
+  private async recordAttempt(
+    orderId: string,
+    channel: 'FCM' | 'EMAIL',
+    status: 'SUCCEEDED' | 'FAILED' | 'SKIPPED',
+  ) {
+    try {
+      await this.database.query(
+        `INSERT INTO app_billing.payment_notification_attempts (order_id, channel, status)
+         VALUES ($1, $2, $3)`,
+        [orderId, channel, status],
+      );
+    } catch (error) {
+      this.logger.error(
+        'Payment notification attempt could not be recorded.',
         error instanceof Error ? error.stack : undefined,
       );
     }
@@ -107,6 +157,7 @@ export class NotificationDispatchAdapter implements NotificationDeliveryPort {
         this.logger.warn(
           `Payment push delivery had ${result.failureCount} failed recipient(s).`,
         );
+        throw new Error('Some FCM deliveries failed.');
       }
     }
   }

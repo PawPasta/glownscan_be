@@ -28,9 +28,17 @@ function gateway(): PaymentGatewayPort {
 }
 
 describe('PaymentService SePay authentication', () => {
-  const service = new PaymentService({} as PaymentDataPort, gateway(), {
-    notifyPaymentSucceeded: async () => undefined,
-  } as never);
+  const service = new PaymentService(
+    {} as PaymentDataPort,
+    gateway(),
+    {
+      notifyPaymentSucceeded: async () => undefined,
+    } as never,
+    {
+      record: async () => undefined,
+      list: async () => ({ items: [], page: 1, limit: 20, total: 0 }),
+    } as never,
+  );
   const body = Buffer.from('{"id":123,"transferAmount":45000}');
   const timestamp = String(Math.floor(Date.now() / 1000));
   const signature = `sha256=${createHmac('sha256', secret)
@@ -90,6 +98,10 @@ describe('PaymentService webhook notification', () => {
       { applySePayPayment } as unknown as PaymentDataPort,
       gateway(),
       { notifyPaymentSucceeded } as never,
+      {
+        record: async () => undefined,
+        list: async () => ({ items: [], page: 1, limit: 20, total: 0 }),
+      } as never,
     );
 
     await expect(
@@ -111,5 +123,93 @@ describe('PaymentService webhook notification', () => {
       adminEmail: 'admin@example.com',
     });
     expect(notifyPaymentSucceeded).toHaveBeenCalledWith(notification);
+  });
+});
+
+describe('PaymentService website contracts', () => {
+  const auditLog = {
+    record: vi.fn().mockResolvedValue(undefined),
+    list: vi
+      .fn()
+      .mockResolvedValue({ items: [], page: 1, limit: 20, total: 0 }),
+  };
+
+  it('returns active offers and caller-scoped subscription/order data', async () => {
+    const findSubscription = vi.fn().mockResolvedValue({ isPremium: true });
+    const listOwnedOrders = vi
+      .fn()
+      .mockResolvedValue({ items: [], page: 1, limit: 20, total: 0 });
+    const data = {
+      listActivePackages: vi
+        .fn()
+        .mockResolvedValue([{ code: 'PREMIUM_MONTHLY' }]),
+      findSubscription,
+      listOwnedOrders,
+    } as unknown as PaymentDataPort;
+    const service = new PaymentService(
+      data,
+      gateway(),
+      {} as never,
+      auditLog as never,
+    );
+
+    await expect(service.listActivePackages()).resolves.toEqual([
+      { code: 'PREMIUM_MONTHLY' },
+    ]);
+    await expect(service.getSubscription('user-1')).resolves.toEqual({
+      isPremium: true,
+    });
+    await expect(service.listOrders('user-1', 1, 20)).resolves.toMatchObject({
+      total: 0,
+    });
+    expect(findSubscription).toHaveBeenCalledWith('user-1');
+    expect(listOwnedOrders).toHaveBeenCalledWith('user-1', 1, 20);
+  });
+
+  it('creates support requests through the user-scoped persistence port', async () => {
+    const createSupportRequest = vi.fn().mockResolvedValue({
+      id: 'support-1',
+      orderId: 'order-1',
+      status: 'OPEN',
+      createdAt: new Date(),
+    });
+    const service = new PaymentService(
+      { createSupportRequest } as unknown as PaymentDataPort,
+      gateway(),
+      {} as never,
+      auditLog as never,
+    );
+    await service.createSupportRequest(
+      'user-1',
+      'order-1',
+      '  Help  ',
+      '  Note  ',
+    );
+    expect(createSupportRequest).toHaveBeenCalledWith({
+      userId: 'user-1',
+      orderId: 'order-1',
+      subject: 'Help',
+      note: 'Note',
+    });
+  });
+
+  it('audits refunds with their actor and reason', async () => {
+    auditLog.record.mockClear();
+    const service = new PaymentService(
+      {
+        refundPaidOrder: vi.fn().mockResolvedValue('REFUNDED'),
+      } as unknown as PaymentDataPort,
+      gateway(),
+      {} as never,
+      auditLog as never,
+    );
+    await service.refundOrder('order-1', ' Duplicate transfer ', 'admin-1');
+    expect(auditLog.record).toHaveBeenCalledWith({
+      actorUserId: 'admin-1',
+      action: 'PAYMENT_ORDER_REFUNDED',
+      resourceType: 'PAYMENT_ORDER',
+      resourceId: 'order-1',
+      metadata: { reason: 'Duplicate transfer' },
+    });
   });
 });

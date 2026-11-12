@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { AuditLogService } from '../../../audit/application/use-case/audit-log.service.js';
 import { NotFoundException } from '../../../../shared/handler/http.exceptions.js';
 import {
   CATALOG_DATA_PORT,
@@ -11,6 +12,7 @@ import {
 export class CatalogService {
   constructor(
     @Inject(CATALOG_DATA_PORT) private readonly catalog: CatalogDataPort,
+    private readonly auditLog: AuditLogService,
   ) {}
 
   listIngredients(options: CatalogListOptions) {
@@ -19,23 +21,63 @@ export class CatalogService {
   listSkinConcerns(options: CatalogListOptions) {
     return this.run(this.catalog.listSkinConcerns(options));
   }
-  createIngredient(input: Record<string, unknown>) {
-    return this.run(this.catalog.createIngredient(input));
+  async createIngredient(actorId: string, input: Record<string, unknown>) {
+    const result = await this.run(this.catalog.createIngredient(input));
+    await this.recordMutation(actorId, 'CATALOG_INGREDIENT_CREATED', result);
+    return result;
   }
-  updateIngredient(id: string, input: Record<string, unknown>) {
-    return this.run(this.catalog.updateIngredient(id, input));
+  async updateIngredient(
+    actorId: string,
+    id: string,
+    input: Record<string, unknown>,
+  ) {
+    const result = await this.run(this.catalog.updateIngredient(id, input));
+    await this.recordMutation(
+      actorId,
+      'CATALOG_INGREDIENT_UPDATED',
+      result,
+      id,
+    );
+    return result;
   }
-  deleteIngredient(id: string) {
-    return this.run(this.catalog.deleteIngredient(id));
+  async deleteIngredient(actorId: string, id: string) {
+    const result = await this.run(this.catalog.deleteIngredient(id));
+    await this.recordMutation(
+      actorId,
+      'CATALOG_INGREDIENT_DEACTIVATED',
+      result,
+      id,
+    );
+    return result;
   }
-  createSkinConcern(input: Record<string, unknown>) {
-    return this.run(this.catalog.createSkinConcern(input));
+  async createSkinConcern(actorId: string, input: Record<string, unknown>) {
+    const result = await this.run(this.catalog.createSkinConcern(input));
+    await this.recordMutation(actorId, 'CATALOG_SKIN_CONCERN_CREATED', result);
+    return result;
   }
-  updateSkinConcern(id: string, input: Record<string, unknown>) {
-    return this.run(this.catalog.updateSkinConcern(id, input));
+  async updateSkinConcern(
+    actorId: string,
+    id: string,
+    input: Record<string, unknown>,
+  ) {
+    const result = await this.run(this.catalog.updateSkinConcern(id, input));
+    await this.recordMutation(
+      actorId,
+      'CATALOG_SKIN_CONCERN_UPDATED',
+      result,
+      id,
+    );
+    return result;
   }
-  deleteSkinConcern(id: string) {
-    return this.run(this.catalog.deleteSkinConcern(id));
+  async deleteSkinConcern(actorId: string, id: string) {
+    const result = await this.run(this.catalog.deleteSkinConcern(id));
+    await this.recordMutation(
+      actorId,
+      'CATALOG_SKIN_CONCERN_DEACTIVATED',
+      result,
+      id,
+    );
+    return result;
   }
   listProducts(options: CatalogListOptions) {
     return this.run(this.catalog.listProducts(options));
@@ -43,26 +85,67 @@ export class CatalogService {
   getProduct(id: string, activeOnly: boolean) {
     return this.run(this.catalog.getProduct(id, activeOnly));
   }
-  createProduct(input: CatalogProductInput) {
-    return this.run(this.catalog.createProduct(input));
+  async createProduct(actorId: string, input: CatalogProductInput) {
+    const result = await this.run(this.catalog.createProduct(input));
+    await this.recordMutation(actorId, 'CATALOG_PRODUCT_CREATED', result);
+    return result;
   }
-  updateProduct(id: string, input: CatalogProductInput) {
-    return this.run(this.catalog.updateProduct(id, input));
+  async updateProduct(actorId: string, id: string, input: CatalogProductInput) {
+    const result = await this.run(this.catalog.updateProduct(id, input));
+    await this.recordMutation(actorId, 'CATALOG_PRODUCT_UPDATED', result, id);
+    return result;
   }
-  deleteProduct(id: string) {
-    return this.run(this.catalog.deleteProduct(id));
+  async deleteProduct(actorId: string, id: string) {
+    const result = await this.run(this.catalog.deleteProduct(id));
+    await this.recordMutation(
+      actorId,
+      'CATALOG_PRODUCT_DEACTIVATED',
+      result,
+      id,
+    );
+    return result;
   }
   listAffiliateLinks(productId: string, activeOnly: boolean) {
     return this.run(this.catalog.listAffiliateLinks(productId, activeOnly));
   }
-  createAffiliateLink(productId: string, input: Record<string, unknown>) {
-    return this.run(this.catalog.createAffiliateLink(productId, input));
+  async createAffiliateLink(
+    actorId: string,
+    productId: string,
+    input: Record<string, unknown>,
+  ) {
+    const result = await this.run(
+      this.catalog.createAffiliateLink(productId, input),
+    );
+    await this.recordMutation(
+      actorId,
+      'CATALOG_AFFILIATE_LINK_CREATED',
+      result,
+    );
+    return result;
   }
-  updateAffiliateLink(id: string, input: Record<string, unknown>) {
-    return this.run(this.catalog.updateAffiliateLink(id, input));
+  async updateAffiliateLink(
+    actorId: string,
+    id: string,
+    input: Record<string, unknown>,
+  ) {
+    const result = await this.run(this.catalog.updateAffiliateLink(id, input));
+    await this.recordMutation(
+      actorId,
+      'CATALOG_AFFILIATE_LINK_UPDATED',
+      result,
+      id,
+    );
+    return result;
   }
-  deleteAffiliateLink(id: string) {
-    return this.run(this.catalog.deleteAffiliateLink(id));
+  async deleteAffiliateLink(actorId: string, id: string) {
+    const result = await this.run(this.catalog.deleteAffiliateLink(id));
+    await this.recordMutation(
+      actorId,
+      'CATALOG_AFFILIATE_LINK_DEACTIVATED',
+      result,
+      id,
+    );
+    return result;
   }
 
   private async run<T>(operation: Promise<T>): Promise<T> {
@@ -79,5 +162,32 @@ export class CatalogService {
       }
       throw error;
     }
+  }
+
+  private recordMutation(
+    actorId: string,
+    action: string,
+    result: unknown,
+    fallbackId?: string,
+  ) {
+    const resourceId =
+      typeof result === 'object' && result !== null && 'id' in result
+        ? String(result.id)
+        : fallbackId;
+    if (!resourceId)
+      throw new Error('Catalog mutation returned no resource ID.');
+    const resourceType = action.includes('INGREDIENT')
+      ? 'CATALOG_INGREDIENT'
+      : action.includes('SKIN_CONCERN')
+        ? 'CATALOG_SKIN_CONCERN'
+        : action.includes('AFFILIATE_LINK')
+          ? 'CATALOG_AFFILIATE_LINK'
+          : 'CATALOG_PRODUCT';
+    return this.auditLog.record({
+      actorUserId: actorId,
+      action,
+      resourceType,
+      resourceId,
+    });
   }
 }

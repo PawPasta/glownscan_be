@@ -38,8 +38,13 @@ describe('database migrations', () => {
     expect(auth?.sql).toContain('date_of_birth DATE');
     expect(auth?.sql).toContain('gender VARCHAR(30)');
     expect(migrations.map(({ version }) => Number(version))).toEqual([
-      1, 2, 3, 4, 5, 6, 7, 8, 9,
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
     ]);
+    const mobile = migrations.find(({ version }) => Number(version) === 11);
+    expect(mobile?.sql).toContain('CREATE TABLE app_routines.routines');
+    expect(mobile?.sql).toContain('CREATE TABLE app_notifications.inbox');
+    expect(mobile?.sql).toContain('CREATE TABLE app_auth.device_metadata');
+    expect(mobile?.sql).not.toMatch(/ALTER\s+TABLE/i);
     expect(
       migrations.find(({ version }) => Number(version) === 6)?.sql,
     ).toContain('CREATE SCHEMA IF NOT EXISTS app_billing');
@@ -57,6 +62,18 @@ describe('database migrations', () => {
     expect(
       migrations.find(({ version }) => Number(version) === 9)?.sql,
     ).toContain('generate_series(1, 100)');
+    const websiteOperations = migrations.find(
+      ({ version }) => Number(version) === 10,
+    )?.sql;
+    expect(websiteOperations).toContain(
+      'CREATE TABLE IF NOT EXISTS app_billing.payment_support_requests',
+    );
+    expect(websiteOperations).toContain(
+      'CREATE TABLE IF NOT EXISTS app_billing.admin_audit_logs',
+    );
+    expect(websiteOperations).toContain(
+      'CREATE TABLE IF NOT EXISTS app_billing.payment_notification_attempts',
+    );
     expect(
       migrations.some(({ sql }) =>
         sql.includes('CREATE SCHEMA IF NOT EXISTS app_profile'),

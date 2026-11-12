@@ -34,8 +34,17 @@ export class AdminAccountController {
   @Get(':id') get(@Param('id') id: string) {
     return this.accounts.get(id);
   }
-  @Post() create(@Body() body: CreateAdminAccountDto) {
-    return this.accounts.create(body);
+  @Post() create(
+    @CurrentUser() actor: SecurityContext,
+    @Body() body: CreateAdminAccountDto,
+  ) {
+    return this.accounts.create({
+      email: body.email,
+      password: body.password,
+      fullName: body.fullName,
+      roleCodes: body.roleCodes,
+      actorId: actor.userId,
+    });
   }
   @Patch(':id') update(
     @CurrentUser() actor: SecurityContext,

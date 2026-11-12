@@ -164,6 +164,23 @@ export class SyncDeviceDto {
   @MinLength(1)
   @MaxLength(4096)
   fcmToken!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  appVersion?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(35)
+  @Matches(/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/)
+  locale?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  @Matches(/^[A-Za-z_+-]+(?:\/[A-Za-z0-9_+-]+)*$/)
+  timezone?: string;
 }
 
 export class DeactivateDeviceDto {

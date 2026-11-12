@@ -5,6 +5,7 @@ import {
   Headers,
   HttpCode,
   Param,
+  ParseUUIDPipe,
   Post,
   Query,
   Req,
@@ -14,16 +15,19 @@ import {
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 import { JwtAuthGuard } from '../../../shared/security/jwt-auth.guard.js';
+import { AdminGuard } from '../../../shared/security/admin.guard.js';
 import {
   CurrentUser,
   type SecurityContext,
 } from '../../../shared/security/security.context.js';
-import { ForbiddenException } from '../../../shared/handler/http.exceptions.js';
 import { PaymentService } from '../application/use-case/payment.service.js';
 import {
+  AdminPaymentOrderQueryDto,
   CancelPaymentOrderDto,
+  CreatePaymentSupportRequestDto,
   CreatePremiumCheckoutDto,
   CreateTopUpDto,
+  PaymentPaginationQueryDto,
   RefundPaymentOrderDto,
   SePayWebhookDto,
 } from './payment.dto.js';
@@ -34,6 +38,18 @@ type RawBodyRequest = Request & { rawBody?: Buffer };
 @Controller('payment')
 export class PaymentController {
   constructor(private readonly payment: PaymentService) {}
+
+  @Get('packages')
+  packages() {
+    return this.payment.listActivePackages();
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('access-token')
+  @Get('subscription')
+  subscription(@CurrentUser() user: SecurityContext) {
+    return this.payment.getSubscription(user.userId);
+  }
 
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('access-token')
@@ -80,6 +96,39 @@ export class PaymentController {
 
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('access-token')
+  @Get('orders')
+  orders(
+    @CurrentUser() user: SecurityContext,
+    @Query() query: PaymentPaginationQueryDto,
+  ) {
+    return this.payment.listOrders(user.userId, query.page, query.limit);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('access-token')
+  @Post('orders/:orderId/support-requests')
+  createSupportRequest(
+    @CurrentUser() user: SecurityContext,
+    @Param('orderId', new ParseUUIDPipe()) orderId: string,
+    @Body() body: CreatePaymentSupportRequestDto,
+  ) {
+    return this.payment.createSupportRequest(
+      user.userId,
+      orderId,
+      body.subject,
+      body.note,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth('access-token')
+  @Get('admin/orders')
+  adminOrders(@Query() query: AdminPaymentOrderQueryDto) {
+    return this.payment.listAdminOrders(query.page, query.limit, query.status);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('access-token')
   @Post('orders/:orderId/cancel')
   cancel(
     @CurrentUser() user: SecurityContext,
@@ -99,7 +148,7 @@ export class PaymentController {
     return this.payment.getOrder(user.userId, orderId);
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @ApiBearerAuth('access-token')
   @Post('admin/orders/:orderId/refund')
   refund(
@@ -107,9 +156,7 @@ export class PaymentController {
     @Param('orderId') orderId: string,
     @Body() body: RefundPaymentOrderDto,
   ) {
-    if (!user.roles.includes('ADMIN'))
-      throw new ForbiddenException('Administrator role is required.');
-    return this.payment.refundOrder(orderId, body.reason);
+    return this.payment.refundOrder(orderId, body.reason, user.userId);
   }
 
   @Post('webhook')
@@ -124,5 +171,23 @@ export class PaymentController {
     this.payment.verifyWebhook(request.rawBody, signature, timestamp);
     await this.payment.processWebhook(payload);
     response.status(200).json({ success: true });
+  }
+}
+
+@ApiTags('admin-operations')
+@ApiBearerAuth('access-token')
+@UseGuards(JwtAuthGuard, AdminGuard)
+@Controller('admin')
+export class AdminOperationsController {
+  constructor(private readonly payment: PaymentService) {}
+
+  @Get('dashboard/summary')
+  dashboardSummary() {
+    return this.payment.adminDashboardSummary();
+  }
+
+  @Get('audit-logs')
+  auditLogs(@Query() query: PaymentPaginationQueryDto) {
+    return this.payment.listAuditLogs(query.page, query.limit);
   }
 }

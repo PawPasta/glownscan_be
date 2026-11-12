@@ -2,9 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../../../../shared/database/database.service.js';
 import type { Uuid } from '../../../../shared/types/domain.types.js';
 import type {
+  AdminPaymentOrderListItem,
   ActivePremiumPackage,
+  PaymentOrderListItem,
   PaymentDataPort,
   PaymentOrderRecord,
+  PremiumPackageOffer,
+  SubscriptionSnapshot,
 } from '../../application/ports/payment-data.port.js';
 import type { PaymentSucceededNotification } from '../../../notification/domain/entities/payment-succeeded-notification.entity.js';
 import type { PoolClient } from 'pg';
@@ -31,6 +35,69 @@ export class PostgresPaymentDataAdapter implements PaymentDataPort {
           durationDays: row.duration_days,
         }
       : null;
+  }
+
+  async listActivePackages(): Promise<PremiumPackageOffer[]> {
+    const result = await this.database.query<{
+      code: string;
+      name: string;
+      amount_vnd: string;
+      duration_days: number;
+      display_order: number;
+    }>(
+      `SELECT code, name, amount_vnd, duration_days,
+              row_number() OVER (ORDER BY duration_days, code)::int AS display_order
+       FROM app_billing.premium_packages WHERE is_active = TRUE
+       ORDER BY duration_days, code`,
+    );
+    return result.rows.map((row) => ({
+      code: row.code,
+      name: row.name,
+      description: `Premium access for ${row.duration_days} days.`,
+      priceVnd: Number(row.amount_vnd),
+      durationDays: row.duration_days,
+      displayOrder: row.display_order,
+      isActive: true,
+    }));
+  }
+
+  async findSubscription(userId: Uuid): Promise<SubscriptionSnapshot> {
+    const result = await this.database.query<{
+      package_code: string;
+      starts_at: Date;
+      expires_at: Date;
+      status: string;
+      is_active: boolean;
+    }>(
+      `SELECT package_code, starts_at, expires_at, status,
+              (status = 'ACTIVE' AND expires_at > CURRENT_TIMESTAMP) AS is_active
+       FROM app_billing.premium_subscriptions
+       WHERE user_id = $1
+       ORDER BY (status = 'ACTIVE' AND expires_at > CURRENT_TIMESTAMP) DESC,
+                expires_at DESC, created_at DESC LIMIT 1`,
+      [userId],
+    );
+    const row = result.rows[0];
+    if (!row)
+      return {
+        isPremium: false,
+        packageCode: null,
+        startedAt: null,
+        expiresAt: null,
+        status: 'NONE',
+      };
+    const status: SubscriptionSnapshot['status'] = row.is_active
+      ? 'ACTIVE'
+      : row.status === 'REFUNDED'
+        ? 'CANCELLED'
+        : 'EXPIRED';
+    return {
+      isPremium: status === 'ACTIVE',
+      packageCode: row.package_code,
+      startedAt: row.starts_at,
+      expiresAt: row.expires_at,
+      status,
+    };
   }
 
   async getOrCreateWallet(userId: Uuid) {
@@ -72,6 +139,131 @@ export class PostgresPaymentDataAdapter implements PaymentDataPort {
       description: row.description,
       createdAt: row.created_at,
     }));
+  }
+
+  async listOwnedOrders(userId: Uuid, page: number, limit: number) {
+    const result = await this.database.query<
+      PaymentOrderListItem & { total: string }
+    >(
+      `SELECT id, order_type AS type, premium_package AS "packageCode",
+              amount_vnd AS "amountVnd", status, payment_code AS "paymentCode",
+              created_at AS "createdAt", expires_at AS "expiresAt",
+              paid_at AS "paidAt", COUNT(*) OVER() AS total
+       FROM app_billing.payment_orders WHERE user_id = $1
+       ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+      [userId, limit, (page - 1) * limit],
+    );
+    return {
+      items: result.rows.map(({ total: _total, ...row }) => ({
+        ...row,
+        amountVnd: Number(row.amountVnd),
+      })),
+      page,
+      limit,
+      total: Number(result.rows[0]?.total ?? 0),
+    };
+  }
+
+  async listAdminOrders(page: number, limit: number, status?: string) {
+    const values: unknown[] = [];
+    const condition = status ? 'WHERE o.status = $1' : '';
+    if (status) values.push(status);
+    values.push(limit, (page - 1) * limit);
+    const result = await this.database.query<
+      AdminPaymentOrderListItem & { total: string }
+    >(
+      `SELECT o.id, o.user_id AS "userId", u.email AS "userEmail",
+              o.order_type AS type, o.premium_package AS "packageCode",
+              o.amount_vnd AS "amountVnd", o.status,
+              o.payment_code AS "paymentCode", o.created_at AS "createdAt",
+              o.expires_at AS "expiresAt", o.paid_at AS "paidAt",
+              COALESCE(receipts.received_amount, 0)::bigint AS "receivedAmountVnd",
+              o.sepay_transaction_id AS "providerReference",
+              CASE
+                WHEN COALESCE(receipts.received_amount, 0) = 0 THEN 'UNMATCHED'
+                WHEN o.status = 'EXPIRED' AND receipts.last_received_at > o.expires_at THEN 'LATE'
+                WHEN receipts.received_amount < o.amount_vnd THEN 'PARTIAL'
+                WHEN receipts.received_amount > o.amount_vnd THEN 'OVERPAID'
+                ELSE 'MATCHED'
+              END AS "reconciliationStatus",
+              COUNT(*) OVER() AS total
+       FROM app_billing.payment_orders o
+       JOIN app_auth.users u ON u.id = o.user_id
+       LEFT JOIN LATERAL (
+         SELECT SUM(e.amount_vnd) AS received_amount, MAX(e.received_at) AS last_received_at
+         FROM app_billing.sepay_webhook_events e WHERE e.payment_code = o.payment_code
+       ) receipts ON TRUE
+       ${condition}
+       ORDER BY o.created_at DESC LIMIT $${values.length - 1} OFFSET $${values.length}`,
+      values,
+    );
+    return {
+      items: result.rows.map(({ total: _total, ...row }) => ({
+        ...row,
+        amountVnd: Number(row.amountVnd),
+        receivedAmountVnd: Number(row.receivedAmountVnd),
+      })),
+      page,
+      limit,
+      total: Number(result.rows[0]?.total ?? 0),
+    };
+  }
+
+  async adminDashboardSummary() {
+    const result = await this.database.query<{
+      pending_orders: string;
+      paid_orders_today: string;
+      wallet_balance_total_vnd: string;
+      active_premium_subscribers: string;
+      failed_payment_notifications: string;
+    }>(
+      `SELECT
+         (SELECT COUNT(*) FROM app_billing.payment_orders WHERE status = 'PENDING') AS pending_orders,
+         (SELECT COUNT(*) FROM app_billing.payment_orders
+           WHERE status = 'PAID' AND paid_at >= CURRENT_DATE
+             AND paid_at < CURRENT_DATE + INTERVAL '1 day') AS paid_orders_today,
+         (SELECT COALESCE(SUM(balance_vnd), 0) FROM app_billing.wallets) AS wallet_balance_total_vnd,
+         (SELECT COUNT(DISTINCT user_id) FROM app_billing.premium_subscriptions
+           WHERE status = 'ACTIVE' AND expires_at > CURRENT_TIMESTAMP) AS active_premium_subscribers,
+         (SELECT COUNT(DISTINCT order_id) FROM app_billing.payment_notification_attempts WHERE status = 'FAILED') AS failed_payment_notifications`,
+    );
+    const row = result.rows[0];
+    return {
+      pendingOrders: Number(row.pending_orders),
+      paidOrdersToday: Number(row.paid_orders_today),
+      walletBalanceTotalVnd: Number(row.wallet_balance_total_vnd),
+      activePremiumSubscribers: Number(row.active_premium_subscribers),
+      failedPaymentNotifications: Number(row.failed_payment_notifications),
+    };
+  }
+
+  async createSupportRequest(input: {
+    userId: Uuid;
+    orderId: string;
+    subject: string;
+    note: string;
+  }) {
+    const result = await this.database.query<{
+      id: string;
+      order_id: string;
+      status: 'OPEN';
+      created_at: Date;
+    }>(
+      `INSERT INTO app_billing.payment_support_requests (order_id, user_id, subject, note)
+       SELECT id, user_id, $3, $4 FROM app_billing.payment_orders
+       WHERE id = $1 AND user_id = $2
+       RETURNING id, order_id, status, created_at`,
+      [input.orderId, input.userId, input.subject, input.note],
+    );
+    const row = result.rows[0];
+    return row
+      ? {
+          id: row.id,
+          orderId: row.order_id,
+          status: row.status,
+          createdAt: row.created_at,
+        }
+      : null;
   }
 
   async cancelPendingOrder(userId: Uuid, orderId: string, reason: string) {

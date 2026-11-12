@@ -425,8 +425,11 @@ export class AuthenticationService {
       installationId: string;
       platform: 'ANDROID' | 'IOS';
       fcmToken: string;
+      appVersion?: string;
+      locale?: string;
+      timezone?: string;
     },
-  ): Promise<{ message: string }> {
+  ): Promise<{ installationId: string; registered: true; updatedAt: string }> {
     const installationId = input.installationId.trim();
     const fcmToken = input.fcmToken.trim();
     if (!installationId || !fcmToken) {
@@ -434,12 +437,22 @@ export class AuthenticationService {
         'Installation ID and FCM token must not be empty.',
       );
     }
-    await this.deviceRegistrationPort.syncDeviceRegistration(userId, {
+    const synced = await this.deviceRegistrationPort.syncDeviceRegistration(
+      userId,
+      {
+        installationId,
+        platform: input.platform,
+        fcmToken,
+        appVersion: input.appVersion,
+        locale: input.locale,
+        timezone: input.timezone,
+      },
+    );
+    return {
       installationId,
-      platform: input.platform,
-      fcmToken,
-    });
-    return { message: 'Device registration synchronized.' };
+      registered: true,
+      updatedAt: synced.updatedAt.toISOString(),
+    };
   }
 
   async deactivateDeviceRegistration(

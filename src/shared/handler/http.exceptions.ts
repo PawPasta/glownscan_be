@@ -11,7 +11,7 @@ export class ApiException extends HttpException {
     readonly errorCode: string,
     options?: HttpExceptionOptions,
   ) {
-    super({ message, errorCode }, status, options);
+    super({ message, errorCode, code: errorCode }, status, options);
   }
 }
 
