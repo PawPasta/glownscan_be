@@ -142,6 +142,26 @@ image directly to Cloudinary using the returned signed fields, then confirm:
 Avatar confirmation requires a positive integer `version`, a 40-character
 hex `signature`, and a `publicId` under the authenticated user's avatar path.
 
+### Authentication response data
+
+The examples below show the `data` value inside the standard response
+envelope `{ "status": 200, "message": "Success", "data": ... }` (POST
+routes normally return HTTP 201 and message `Created successfully`).
+
+| Endpoint(s)                                                                                                                                                                                                      | `data` response                                                                                                                                                                                                                                                        |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /auth/register`, `/auth/verify-email`, `/auth/verify-email/resend`, `/auth/logout`, `/auth/password/reset/request`, `/auth/password/reset/resend`, `/auth/password/reset/confirm`, `/auth/password/change` | `{ "message": "..." }`; reset/resend messages are deliberately generic.                                                                                                                                                                                                |
+| `POST /auth/verify-email/check`, `/auth/password/reset/check`                                                                                                                                                    | `{ "success": true }` only when this exact token is already marked consumed; `false` otherwise. This is not a preflight check that the token is currently valid.                                                                                                       |
+| `POST /auth/mobile/login`, `/auth/firebase/mobile/login`                                                                                                                                                         | `{ "accessToken": "<jwt>", "refreshToken": "<opaque-token>" }`                                                                                                                                                                                                         |
+| `POST /auth/refresh`                                                                                                                                                                                             | `{ "accessToken": "<jwt>", "refreshToken": "<rotated-opaque-token>", "expiresIn": 900 }` (`expiresIn` is seconds; use configured runtime value).                                                                                                                       |
+| `GET /auth/profile`, `PATCH /auth/profile`, `POST /auth/profile/avatar/confirm`                                                                                                                                  | `{ "profile": { "id": "<uuid>", "userId": "<uuid>", "fullName": "Nguyen An", "avatarUrl": "https://...", "dateOfBirth": "1998-04-12", "gender": "PREFER_NOT_TO_SAY", "createdAt": "<ISO-8601>", "updatedAt": "<ISO-8601>" } }`; nullable profile fields may be `null`. |
+| `POST /auth/profile/avatar/upload-intent`                                                                                                                                                                        | `{ "publicId": "glownscan/avatars/...", "timestamp": 1234567890, "signature": "<signature>", "apiKey": "<cloudinary-api-key>", "cloudName": "<cloud-name>" }`                                                                                                          |
+| `PUT /devices/me`                                                                                                                                                                                                | `{ "message": "Device registration synchronized." }`                                                                                                                                                                                                                   |
+| `DELETE /devices/me`                                                                                                                                                                                             | No response data (`undefined`; JSON serialization omits the `data` field).                                                                                                                                                                                             |
+
+The API response envelope's `status` is the HTTP status code, not a separate
+business status. Never log or expose the returned access/refresh tokens.
+
 ## Core skin experience
 
 | Method | Route                          | Status      | Why Flutter uses it                                                                             |
@@ -198,6 +218,88 @@ The analyze request also requires an `Idempotency-Key` header. Reuse the same
 key only when retrying the same logical request and same payload. `GET
 /skin-analysis` accepts integer query parameters `page` (default 1) and `limit`
 (default 20, maximum 100).
+
+### Core response data
+
+`GET /skin-assessments/current` returns `null` before the user has saved an
+assessment. GET and PUT otherwise return:
+
+```json
+{
+  "questionnaireVersion": "skin-assessment-v1",
+  "answers": {
+    "skinType": "COMBINATION",
+    "sensitivity": "NOT_SURE",
+    "concerns": ["ACNE", "OILINESS"],
+    "goals": ["REDUCE_ACNE", "OIL_CONTROL"]
+  },
+  "createdAt": "<ISO-8601>",
+  "updatedAt": "<ISO-8601>"
+}
+```
+
+`POST /skin-analysis/upload-intent` returns signed Cloudinary fields:
+
+```json
+{
+  "publicId": "glownscan/skin-analysis/<user-uuid>/<image-uuid>",
+  "timestamp": 1234567890,
+  "signature": "<signature>",
+  "apiKey": "<cloudinary-api-key>",
+  "cloudName": "<cloud-name>"
+}
+```
+
+The create endpoint returns HTTP 202 with `data` shaped as
+`{ "sessionId": "<uuid>", "status": "QUEUED" }`. A retry using the same
+user, idempotency key, and payload returns the existing session ID and its
+current status; reusing the key with a different payload returns a conflict.
+Status polling returns:
+
+```json
+{
+  "id": "<uuid>",
+  "status": "QUEUED",
+  "createdAt": "<ISO-8601>",
+  "completedAt": null,
+  "errorCode": null,
+  "result": null
+}
+```
+
+When completed, status is `SUCCEEDED` and `result` contains the validated skin-analysis JSON (including
+`schemaVersion`, `quality`, `limitations`, and `observations`). Failed jobs
+have `status: "FAILED"`, a normalized `errorCode`, and normally a `null`
+result. History returns `{ "items": [<session>...], "total": 1 }`; `items`
+use the same session shape as status polling.
+
+`GET /recommendations/me` returns:
+
+```json
+{
+  "generatedAt": "<ISO-8601>",
+  "source": {
+    "assessmentAvailable": true,
+    "analysisAvailable": true,
+    "concernCodes": ["ACNE", "OILINESS"]
+  },
+  "items": [
+    {
+      "id": "<product-uuid>",
+      "name": "Daily Moisturizer",
+      "brand": "Example",
+      "description": "Lightweight moisturizer",
+      "imageUrl": "https://...",
+      "matchedConcerns": ["ACNE"],
+      "reasons": ["Matches your acne concern."],
+      "disclaimer": "Cosmetic product information only; not medical advice."
+    }
+  ]
+}
+```
+
+The response is wrapped in the common envelope; recommendation `items` are
+matched product cards, not a persisted routine or medical advice.
 
 ## Missing Flutter APIs / contracts
 

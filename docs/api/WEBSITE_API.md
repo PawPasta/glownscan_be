@@ -103,6 +103,24 @@ Cloudinary using the signed response, then `/auth/profile/avatar/confirm`:
 Avatar confirmation requires a positive integer `version`, a 40-character
 hex `signature`, and a `publicId` under the authenticated user's avatar path.
 
+### Authentication response data
+
+Examples below show the `data` value inside `{ "status", "message", "data" }`.
+POST routes normally use HTTP 201 with message `Created successfully`; GET,
+PATCH, and DELETE routes use `Success`.
+
+| Endpoint(s)                                                                                                                                                                                                      | `data` response                                                                                                                                                                                                                                                |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /auth/register`, `/auth/verify-email`, `/auth/verify-email/resend`, `/auth/logout`, `/auth/password/reset/request`, `/auth/password/reset/resend`, `/auth/password/reset/confirm`, `/auth/password/change` | `{ "message": "..." }`; reset/resend messages do not reveal whether an account exists.                                                                                                                                                                         |
+| `POST /auth/verify-email/check`, `/auth/password/reset/check`                                                                                                                                                    | `{ "success": true }` only when this exact token is already marked consumed; `false` otherwise. This is not a preflight check that the token is currently valid.                                                                                               |
+| `POST /auth/login`, `/auth/firebase/login`                                                                                                                                                                       | `{ "accessToken": "<jwt>", "refreshToken": "<opaque-token>" }`                                                                                                                                                                                                 |
+| `POST /auth/refresh`                                                                                                                                                                                             | `{ "accessToken": "<jwt>", "refreshToken": "<rotated-opaque-token>", "expiresIn": 900 }`; duration is seconds and configurable.                                                                                                                                |
+| `GET /auth/profile`, `PATCH /auth/profile`, `POST /auth/profile/avatar/confirm`                                                                                                                                  | `{ "profile": { "id": "<uuid>", "userId": "<uuid>", "fullName": "Nguyen An", "avatarUrl": "https://...", "dateOfBirth": "1998-04-12", "gender": "PREFER_NOT_TO_SAY", "createdAt": "<ISO-8601>", "updatedAt": "<ISO-8601>" } }`; nullable fields may be `null`. |
+| `POST /auth/profile/avatar/upload-intent`                                                                                                                                                                        | `{ "publicId": "glownscan/avatars/...", "timestamp": 1234567890, "signature": "<signature>", "apiKey": "<cloudinary-api-key>", "cloudName": "<cloud-name>" }`                                                                                                  |
+
+Login and refresh responses contain credentials; do not log them. The response
+envelope's `status` field is the HTTP status code.
+
 ## Public catalog pages
 
 | Method | Route                                          | Status      | Purpose                          |
@@ -116,6 +134,27 @@ hex `signature`, and a `publicId` under the authenticated user's avatar path.
 Catalog reads are public and return active data. The affiliate purchase is
 completed by an external partner; GlowScan does not own checkout or retailer
 inventory/pricing.
+
+### Catalog response data
+
+List routes return the common envelope with `data` shaped as
+`{ "items": [...], "page": 1, "limit": 20, "total": 1 }`. Product list
+items contain `id`, `name`, `brand`, `description`, `imageUrl`, `isActive`,
+`createdAt`, and `updatedAt`. Ingredient items contain `id`, `name`,
+`description`, `isActive`, `createdAt`, and `updatedAt`; skin-concern items
+also contain `code`.
+
+Product detail and admin product create/update return a product object with
+those product fields plus `ingredients: [{ "id", "name" }]` and
+`skinConcerns: [{ "id", "code", "name" }]`. Public affiliate-link listing
+returns an array of `{ "id", "productId", "partnerName", "url", "isActive",
+"createdAt", "updatedAt" }`; admin create/update returns the corresponding
+link fields (timestamps are omitted from write responses).
+
+Note: admin ingredient/skin-concern create and update currently return raw
+database rows (`snake_case`, e.g. `is_active`, `created_at`), while their list
+responses use `camelCase` (`isActive`, `createdAt`). Treat this as an existing
+response inconsistency until the backend normalizes it.
 
 ## Catalog query and write bodies
 
@@ -214,6 +253,17 @@ Refund requires a reason in the request body:
 { "reason": "Customer support case: duplicate transfer" }
 ```
 
+### Admin response data
+
+Admin account list returns `{ "items": [<account>...], "page": 1,
+"limit": 20, "total": 1 }`. An account has `id`, `email`, `fullName`,
+`status`, `emailVerifiedAt`, `createdAt`, and `roles`. Account get/create/update
+return one account object; delete returns `{ "message": "Account deleted." }`.
+
+Catalog create/update responses use the catalog shapes described above.
+Catalog and affiliate-link DELETE operations are soft deactivations and return
+`{ "id": "<uuid>", "isActive": false }`.
+
 ## Payment pages
 
 | Method | Route                                       | Status      | Purpose                                                       |
@@ -253,6 +303,36 @@ client must not send or choose the package price.
 
 `GET /payment/wallet/transactions` accepts integer `page` (default 1) and
 `limit` (default 20, maximum 100).
+
+### Payment response data
+
+`POST /payment/top-ups` and `POST /payment/premium-checkouts` return order and
+QR data:
+
+```json
+{
+  "id": "<order-uuid>",
+  "type": "TOP_UP",
+  "amountVnd": 100000,
+  "paymentCode": "GS0123456789ABCDEF0123",
+  "expiresAt": "<ISO-8601>",
+  "qrImageUrl": "https://<vietqr-image-url>"
+}
+```
+
+For a Premium checkout, `type` is `PREMIUM_PURCHASE` and `amountVnd` comes
+from the active database package. `GET /payment/wallet` returns
+`{ "balanceVnd": 100000 }`. Transaction history returns an array of ledger
+rows with `id`, `type`, `direction`, `amountVnd`, `balanceAfterVnd`,
+`description`, and `createdAt` (the current endpoint does not include page or
+total metadata in the response). `GET /payment/orders/:orderId` returns
+`{ "id", "type", "packageCode", "amountVnd", "status", "expiresAt" }`.
+Cancel returns `{ "id": "<order-uuid>", "status": "CANCELLED" }`; admin
+refund returns `{ "id": "<order-uuid>", "status": "REFUNDED" }`.
+
+The server-to-server webhook bypasses the common envelope and responds with
+HTTP 200 `{ "success": true }` after accepting a valid event. The browser
+should poll its authenticated order endpoint to determine payment status.
 
 SePay calls `POST /payment/webhook` with the provider's JSON body and
 `X-SePay-Timestamp` and `X-SePay-Signature` headers. Example body:
