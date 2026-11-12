@@ -2,7 +2,7 @@ import type { Uuid } from '../../../../shared/types/domain.types.js';
 import type { SkinAnalysisResult } from '../types/skin-analysis-result.js';
 
 export type AnalysisSessionStatus =
-  'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED';
+  'UPLOAD_PENDING' | 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED';
 
 export interface PersistedAnalysisSession {
   id: Uuid;
@@ -19,6 +19,11 @@ export interface AnalysisSessionPort {
     key: string,
     fingerprint: string,
   ): Promise<{ id: Uuid; created: boolean; fingerprint: string }>;
+  queueSession(
+    sessionId: Uuid,
+    userId: Uuid,
+    payload: { secureUrl: string; reservationId: Uuid },
+  ): Promise<boolean>;
   markRunning(sessionId: Uuid, userId: Uuid): Promise<boolean>;
   completeSession(
     sessionId: Uuid,

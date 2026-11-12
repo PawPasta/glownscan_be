@@ -1,6 +1,7 @@
 import type { Uuid } from '../../../../shared/types/domain.types.js';
+import type { CloudinaryUploadPurpose } from '../../domain/entities/upload-intent.entity.js';
 
-export type CloudinaryUploadPurpose = 'AVATAR' | 'SKIN_ANALYSIS';
+export type { CloudinaryUploadPurpose } from '../../domain/entities/upload-intent.entity.js';
 
 export interface UploadIntentPort {
   createIntent(

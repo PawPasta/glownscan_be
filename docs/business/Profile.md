@@ -32,3 +32,15 @@ workflow documented in [Image Upload](./Upload-Image.md).
 Profile details and the verified avatar URL are stored on the user's record in
 `app_auth.users`. Analysis history, routines, recommendations, and a persisted
 skin profile are not part of the current profile workflow.
+
+## Product gaps
+
+- There is no account export/deletion workflow that coordinates auth, payment
+  ledger retention, analysis data, Cloudinary assets, device registrations,
+  notification tokens, and future routine/calendar data.
+- A timezone and preferred routine times are not currently profile fields;
+  routine scheduling should collect these explicitly rather than assume the
+  server timezone.
+- Google Calendar must be connected through explicit OAuth authorization by
+  the account owner. A saved Gmail address by itself is not proof of calendar
+  access. See [Recommendations](./Recommendation.md).

@@ -13,16 +13,32 @@ import { ANALYSIS_SESSION_PORT } from './application/ports/analysis-session.port
 import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module.js';
 import { IMAGE_DOWNLOADER_PORT } from './application/ports/image-downloader.port.js';
 import { CloudinaryImageDownloader } from './infrastructure/adapters/cloudinary-image-downloader.js';
+import { SKIN_ASSESSMENT_PORT } from './application/ports/skin-assessment.port.js';
+import { SkinAssessmentService } from './application/use-case/skin-assessment.service.js';
+import { PostgresSkinAssessmentAdapter } from './infrastructure/adapters/postgres-skin-assessment.adapter.js';
+import { SkinAssessmentController } from './presentation/skin-assessment.controller.js';
+import { ANALYSIS_OUTBOX_PORT } from './application/ports/analysis-outbox.port.js';
+import { PostgresAnalysisOutboxAdapter } from './infrastructure/adapters/postgres-analysis-outbox.adapter.js';
+import { ANALYSIS_WORK_QUEUE_PORT } from './application/ports/analysis-work-queue.port.js';
+import { BullMqAnalysisWorkQueueAdapter } from './infrastructure/adapters/bullmq-analysis-work-queue.adapter.js';
+import { AnalysisOutboxDispatcher } from './infrastructure/workers/analysis-outbox-dispatcher.service.js';
+import { AnalysisWorker } from './infrastructure/workers/analysis-worker.service.js';
 
 @Module({
   imports: [ConfigModule, AuthModule, CloudinaryModule, RateLimitModule],
-  controllers: [SkinAnalysisController],
+  controllers: [SkinAnalysisController, SkinAssessmentController],
   providers: [
     GeminiGenerativeModelAdapter,
     CloudinaryImageDownloader,
     PostgresAnalysisQuotaAdapter,
     PostgresAnalysisSessionAdapter,
+    PostgresAnalysisOutboxAdapter,
+    BullMqAnalysisWorkQueueAdapter,
+    PostgresSkinAssessmentAdapter,
     SkinAnalysisService,
+    SkinAssessmentService,
+    AnalysisOutboxDispatcher,
+    AnalysisWorker,
     {
       provide: GEMINI_GENERATIVE_MODEL_PORT,
       useExisting: GeminiGenerativeModelAdapter,
@@ -32,6 +48,18 @@ import { CloudinaryImageDownloader } from './infrastructure/adapters/cloudinary-
     {
       provide: ANALYSIS_SESSION_PORT,
       useExisting: PostgresAnalysisSessionAdapter,
+    },
+    {
+      provide: ANALYSIS_OUTBOX_PORT,
+      useExisting: PostgresAnalysisOutboxAdapter,
+    },
+    {
+      provide: ANALYSIS_WORK_QUEUE_PORT,
+      useExisting: BullMqAnalysisWorkQueueAdapter,
+    },
+    {
+      provide: SKIN_ASSESSMENT_PORT,
+      useExisting: PostgresSkinAssessmentAdapter,
     },
   ],
   exports: [GEMINI_GENERATIVE_MODEL_PORT],

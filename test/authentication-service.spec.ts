@@ -1,11 +1,10 @@
-import { ConfigService } from '@nestjs/config';
-import { JwtService } from '@nestjs/jwt';
 import { Test, type TestingModule } from '@nestjs/testing';
 import { compare, hash } from 'bcryptjs';
 import { vi } from 'vitest';
 import {
   CHANGE_PASSWORD_PORT,
   CHECK_ACTION_TOKEN_PORT,
+  DEVICE_REGISTRATION_PORT,
   FIREBASE_ID_TOKEN_VERIFIER_PORT,
   FIREBASE_LOGIN_PORT,
   FirebaseAccountConflictError,
@@ -23,8 +22,10 @@ import {
 } from '../src/modules/auth/application/ports/index.js';
 import { AuthenticationService } from '../src/modules/auth/application/use-case/authentication.service.js';
 import { TokenService } from '../src/modules/auth/application/use-case/token.service.js';
+import { AUTHENTICATION_EMAIL_PORT } from '../src/modules/auth/application/ports/authentication-email.port.js';
+import { PASSWORD_HASHER_PORT } from '../src/modules/auth/application/ports/password-hasher.port.js';
+import { TOKEN_RUNTIME_PORT } from '../src/modules/auth/application/ports/token-runtime.port.js';
 import { UserStatus } from '../src/modules/auth/domain/entities/enums/auth.enums.js';
-import { SmtpEmailService } from '../src/modules/auth/infrastructure/adapters/smtp-email.service.js';
 import {
   BadRequestException,
   ConflictException,
@@ -56,6 +57,8 @@ describe('AuthenticationService', () => {
     revokeRefreshToken: ReturnType<typeof vi.fn>;
     getProfile: ReturnType<typeof vi.fn>;
     updateUserProfile: ReturnType<typeof vi.fn>;
+    syncDeviceRegistration: ReturnType<typeof vi.fn>;
+    deactivateDeviceRegistration: ReturnType<typeof vi.fn>;
   };
   let emailService: {
     sendVerificationEmail: ReturnType<typeof vi.fn>;
@@ -89,6 +92,8 @@ describe('AuthenticationService', () => {
       revokeRefreshToken: vi.fn().mockResolvedValue(undefined),
       getProfile: vi.fn().mockResolvedValue({ profile: { id: userId } }),
       updateUserProfile: vi.fn().mockResolvedValue(undefined),
+      syncDeviceRegistration: vi.fn().mockResolvedValue(undefined),
+      deactivateDeviceRegistration: vi.fn().mockResolvedValue(undefined),
     };
     emailService = {
       sendVerificationEmail: vi.fn().mockResolvedValue(undefined),
@@ -123,12 +128,48 @@ describe('AuthenticationService', () => {
         { provide: CHANGE_PASSWORD_PORT, useValue: repository },
         { provide: VALIDATE_ACCESS_TOKEN_PORT, useValue: repository },
         { provide: USER_PROFILE_PORT, useValue: repository },
-        { provide: SmtpEmailService, useValue: emailService },
-        { provide: JwtService, useValue: jwt },
+        { provide: DEVICE_REGISTRATION_PORT, useValue: repository },
         {
-          provide: ConfigService,
+          provide: AUTHENTICATION_EMAIL_PORT,
+          useValue: emailService,
+        },
+        {
+          provide: PASSWORD_HASHER_PORT,
           useValue: {
-            get: (_key: string, defaultValue?: string) => defaultValue,
+            hash: (password: string) => hash(password, 12),
+            verify: compare,
+          },
+        },
+        {
+          provide: TOKEN_RUNTIME_PORT,
+          useValue: {
+            accessTokenTtlSeconds: 900,
+            refreshTokenTtlDays: 30,
+            issueAccessToken: (payload: unknown) =>
+              (jwt.signAsync as unknown as (value: unknown) => Promise<string>)(
+                payload,
+              ),
+            verifyAccessToken: (token: string) =>
+              (
+                jwt.verifyAsync as unknown as (
+                  value: string,
+                  options: Record<string, unknown>,
+                ) => Promise<unknown>
+              )(token, {
+                issuer: 'glownscan-api',
+                audience: 'glownscan-client',
+              }),
+            verifyAccessTokenForRefresh: (token: string) =>
+              (
+                jwt.verifyAsync as unknown as (
+                  value: string,
+                  options: Record<string, unknown>,
+                ) => Promise<unknown>
+              )(token, {
+                issuer: 'glownscan-api',
+                audience: 'glownscan-client',
+                ignoreExpiration: true,
+              }),
           },
         },
       ],
@@ -251,6 +292,60 @@ describe('AuthenticationService', () => {
     ];
     expect(session.platform).toBe('IOS');
     expect(session.fcmToken).toBe('fcm-registration-token');
+  });
+
+  it('allows mobile login before Firebase has issued an FCM token', async () => {
+    repository.findUserByEmail.mockResolvedValue({
+      id: userId,
+      email: 'user@example.com',
+      passwordHash: await hash('Glow123!', 4),
+      status: UserStatus.Active,
+      tokenVersion: 1,
+      roles: ['USER'],
+      failedLoginCount: 0,
+      lockedUntil: null,
+    });
+
+    await service.loginMobile(
+      {
+        email: 'user@example.com',
+        password: 'Glow123!',
+        platform: 'IOS',
+        installationId: 'flutter-installation-123',
+      },
+      { ipAddress: null, userAgent: null },
+    );
+
+    expect(repository.createRefreshSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceUuid: 'flutter-installation-123',
+        fcmToken: undefined,
+      }),
+    );
+  });
+
+  it('synchronizes and deactivates only the authenticated user device', async () => {
+    await expect(
+      service.syncDeviceRegistration(userId, {
+        installationId: ' flutter-installation-123 ',
+        platform: 'ANDROID',
+        fcmToken: ' fcm-token ',
+      }),
+    ).resolves.toEqual({ message: 'Device registration synchronized.' });
+    expect(repository.syncDeviceRegistration).toHaveBeenCalledWith(userId, {
+      installationId: 'flutter-installation-123',
+      platform: 'ANDROID',
+      fcmToken: 'fcm-token',
+    });
+
+    await service.deactivateDeviceRegistration(
+      userId,
+      ' flutter-installation-123 ',
+    );
+    expect(repository.deactivateDeviceRegistration).toHaveBeenCalledWith(
+      userId,
+      'flutter-installation-123',
+    );
   });
 
   it('checks whether an email action token was successfully consumed', async () => {

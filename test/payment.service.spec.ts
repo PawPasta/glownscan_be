@@ -1,30 +1,36 @@
 import { createHmac } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
+import type { PaymentDataPort } from '../src/modules/payment/application/ports/payment-data.port.js';
+import type { PaymentGatewayPort } from '../src/modules/payment/application/ports/payment-gateway.port.js';
 import {
   extractPaymentCode,
   PaymentService,
 } from '../src/modules/payment/application/use-case/payment.service.js';
 
 const secret = 'payment-test-secret';
-const config = {
-  get: (key: string, fallback?: string) =>
-    key === 'GLOWNSCAN_PAYMENT_ORDER_TTL_MINUTES' ? fallback : undefined,
-  getOrThrow: (key: string) =>
-    ({
-      GLOWNSCAN_SEPAY_WEBHOOK_SECRET: secret,
-      GLOWNSCAN_BANK_BIN: '970423',
-      GLOWNSCAN_BANK_ACCOUNT_NAME: 'Test Account',
-      GLOWNSCAN_SEPAY_BANK_ACCOUNT_NUMBER: '0123456789',
-      GLOWNSCAN_ADMIN_EMAIL: 'admin@example.com',
-    })[key]!,
-};
+
+function gateway(): PaymentGatewayPort {
+  return {
+    adminEmail: () => 'admin@example.com',
+    orderTtlMinutes: () => 15,
+    createQrImageUrl: () => 'https://example.test/qr.png',
+    verifyWebhook: (rawBody, signature, timestamp) => {
+      if (!rawBody || !signature || !timestamp || !/^\d+$/.test(timestamp))
+        return 'INVALID';
+      if (Math.abs(Date.now() / 1000 - Number(timestamp)) > 300)
+        return 'EXPIRED';
+      const expected = `sha256=${createHmac('sha256', secret)
+        .update(`${timestamp}.${rawBody.toString('utf8')}`)
+        .digest('hex')}`;
+      return signature === expected ? 'VALID' : 'INVALID';
+    },
+  };
+}
 
 describe('PaymentService SePay authentication', () => {
-  const service = new PaymentService(
-    {} as never,
-    config as never,
-    { notifyPaymentSucceeded: async () => undefined } as never,
-  );
+  const service = new PaymentService({} as PaymentDataPort, gateway(), {
+    notifyPaymentSucceeded: async () => undefined,
+  } as never);
   const body = Buffer.from('{"id":123,"transferAmount":45000}');
   const timestamp = String(Math.floor(Date.now() / 1000));
   const signature = `sha256=${createHmac('sha256', secret)
@@ -39,7 +45,7 @@ describe('PaymentService SePay authentication', () => {
 
   it('rejects tampered signatures and stale requests', () => {
     expect(() => service.verifyWebhook(body, 'sha256=bad', timestamp)).toThrow(
-      'Invalid SePay webhook signature.',
+      'Invalid SePay webhook authentication.',
     );
     expect(() => service.verifyWebhook(body, signature, '1')).toThrow(
       'Expired SePay webhook timestamp.',
@@ -70,45 +76,19 @@ describe('extractPaymentCode', () => {
 });
 
 describe('PaymentService webhook notification', () => {
-  it('notifies exactly once after a new payment transaction commits', async () => {
-    const client = {
-      query: vi
-        .fn()
-        .mockResolvedValueOnce({ rowCount: 1, rows: [] })
-        .mockResolvedValueOnce({
-          rows: [
-            {
-              id: 'order-1',
-              user_id: 'user-1',
-              order_type: 'TOP_UP',
-              premium_package: null,
-              premium_duration_days: null,
-              amount_vnd: '79000',
-              status: 'PENDING',
-              payment_code: 'GSABC',
-              expires_at: new Date(Date.now() + 60_000),
-            },
-          ],
-        })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [{ id: 'admin-1' }] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [{ balance_vnd: '79000' }] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [{ balance_vnd: '79000' }] })
-        .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] }),
+  it('notifies after the persistence port applies a new payment', async () => {
+    const notification = {
+      userId: 'user-1',
+      orderId: 'order-1',
+      amountVnd: 79_000,
+      orderType: 'TOP_UP' as const,
+      packageCode: null,
     };
+    const applySePayPayment = vi.fn().mockResolvedValue(notification);
     const notifyPaymentSucceeded = vi.fn().mockResolvedValue(undefined);
     const service = new PaymentService(
-      {
-        transaction: async (
-          work: (transactionClient: typeof client) => unknown,
-        ) => work(client),
-      } as never,
-      config as never,
+      { applySePayPayment } as unknown as PaymentDataPort,
+      gateway(),
       { notifyPaymentSucceeded } as never,
     );
 
@@ -123,12 +103,13 @@ describe('PaymentService webhook notification', () => {
       }),
     ).resolves.toEqual({ success: true });
 
-    expect(notifyPaymentSucceeded).toHaveBeenCalledWith({
-      userId: 'user-1',
-      orderId: 'order-1',
-      amountVnd: 79_000,
-      orderType: 'TOP_UP',
-      packageCode: null,
+    expect(applySePayPayment).toHaveBeenCalledWith({
+      eventId: '43842569',
+      paymentCode: 'GSABC',
+      transferType: 'in',
+      transferAmount: 79_000,
+      adminEmail: 'admin@example.com',
     });
+    expect(notifyPaymentSucceeded).toHaveBeenCalledWith(notification);
   });
 });

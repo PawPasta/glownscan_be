@@ -7,6 +7,7 @@ import { FirebaseAccountConflictError } from '../../application/ports/index.js';
 import type {
   AuthUserRecord,
   ChangePasswordPort,
+  DeviceRegistrationPort,
   CheckActionTokenPort,
   FirebaseIdentityClaims,
   FirebaseLoginPort,
@@ -48,7 +49,8 @@ export class PostgresAuthenticationAdapter
     ResetPasswordPort,
     ChangePasswordPort,
     ValidateAccessTokenPort,
-    UserProfilePort
+    UserProfilePort,
+    DeviceRegistrationPort
 {
   constructor(private readonly database: DatabaseService) {}
 
@@ -547,6 +549,59 @@ export class PostgresAuthenticationAdapter
     });
   }
 
+  async syncDeviceRegistration(
+    userId: Uuid,
+    input: {
+      installationId: string;
+      platform: 'ANDROID' | 'IOS';
+      fcmToken: string;
+    },
+  ): Promise<void> {
+    await this.database.transaction(async (client) => {
+      const device = await client.query<{ id: Uuid }>(
+        `INSERT INTO app_auth.user_devices (user_id, device_uuid, platform, last_active_at)
+         VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+         ON CONFLICT (user_id, device_uuid)
+         DO UPDATE SET platform = EXCLUDED.platform, last_active_at = CURRENT_TIMESTAMP
+         RETURNING id`,
+        [userId, input.installationId, input.platform],
+      );
+      const deviceId = device.rows[0].id;
+      await client.query(
+        `UPDATE app_auth.push_registrations
+         SET status = 'INACTIVE'
+         WHERE device_id = $1 AND status = 'ACTIVE'
+           AND registration_value <> $2`,
+        [deviceId, input.fcmToken],
+      );
+      await client.query(
+        `INSERT INTO app_auth.push_registrations
+           (device_id, registration_type, registration_value)
+         VALUES ($1, 'FCM_TOKEN', $2)
+         ON CONFLICT (registration_value)
+         DO UPDATE SET device_id = EXCLUDED.device_id,
+           registration_type = EXCLUDED.registration_type,
+           notification_enabled = TRUE, status = 'ACTIVE',
+           last_registered_at = CURRENT_TIMESTAMP`,
+        [deviceId, input.fcmToken],
+      );
+    });
+  }
+
+  async deactivateDeviceRegistration(
+    userId: Uuid,
+    installationId: string,
+  ): Promise<void> {
+    await this.database.query(
+      `UPDATE app_auth.push_registrations pr
+       SET status = 'INACTIVE'
+       FROM app_auth.user_devices ud
+       WHERE pr.device_id = ud.id AND ud.user_id = $1 AND ud.device_uuid = $2
+         AND pr.status = 'ACTIVE'`,
+      [userId, installationId],
+    );
+  }
+
   async rotateRefreshToken(
     oldTokenHash: string,
     newTokenHash: string,
@@ -628,8 +683,11 @@ export class PostgresAuthenticationAdapter
 
   async revokeRefreshToken(tokenHash: string): Promise<void> {
     await this.database.transaction(async (client) => {
-      const token = await client.query<{ token_family_id: string }>(
-        `SELECT token_family_id FROM app_auth.refresh_tokens
+      const token = await client.query<{
+        token_family_id: string;
+        device_id: Uuid;
+      }>(
+        `SELECT token_family_id, device_id FROM app_auth.refresh_tokens
          WHERE token_hash = $1 FOR UPDATE`,
         [tokenHash],
       );
@@ -639,6 +697,12 @@ export class PostgresAuthenticationAdapter
            SET revoked_at = CURRENT_TIMESTAMP, revoke_reason = 'LOGOUT'
            WHERE token_family_id = $1 AND revoked_at IS NULL`,
           [token.rows[0].token_family_id],
+        );
+        await client.query(
+          `UPDATE app_auth.push_registrations
+           SET status = 'INACTIVE'
+           WHERE device_id = $1 AND status = 'ACTIVE'`,
+          [token.rows[0].device_id],
         );
       }
     });

@@ -15,6 +15,7 @@ export function validateEnvironment(env: Record<string, unknown>) {
     'GLOWNSCAN_SEPAY_BANK_ACCOUNT_NUMBER',
     'GLOWNSCAN_BANK_ACCOUNT_NAME',
     'GLOWNSCAN_BANK_BIN',
+    'GLOWNSCAN_REDIS_URL',
   ];
   for (const key of required)
     if (typeof env[key] !== 'string' || !env[key].trim())
@@ -32,6 +33,10 @@ export function validateEnvironment(env: Record<string, unknown>) {
     'GLOWNSCAN_ANALYSIS_IMAGE_MAX_BYTES',
     'GLOWNSCAN_ANALYSIS_IMAGE_DOWNLOAD_TIMEOUT_MS',
     'GLOWNSCAN_PAYMENT_ORDER_TTL_MINUTES',
+    'GLOWNSCAN_ANALYSIS_WORKER_CONCURRENCY',
+    'GLOWNSCAN_ANALYSIS_WORKER_ATTEMPTS',
+    'GLOWNSCAN_ANALYSIS_OUTBOX_POLL_MS',
+    'GLOWNSCAN_ANALYSIS_WORKER_RECLAIM_AFTER_SECONDS',
   ]) {
     if (
       env[key] !== undefined &&

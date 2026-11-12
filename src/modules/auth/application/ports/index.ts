@@ -2,6 +2,7 @@ export type {
   AuthUserRecord,
   CheckActionTokenPort,
   ChangePasswordPort,
+  DeviceRegistrationPort,
   FirebaseIdTokenVerifierPort,
   FirebaseIdentityClaims,
   FirebaseLoginPort,
@@ -23,6 +24,7 @@ export type {
 export {
   CHANGE_PASSWORD_PORT,
   CHECK_ACTION_TOKEN_PORT,
+  DEVICE_REGISTRATION_PORT,
   FirebaseAccountConflictError,
   FIREBASE_ID_TOKEN_VERIFIER_PORT,
   FIREBASE_LOGIN_PORT,

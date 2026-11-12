@@ -30,12 +30,15 @@ Before modifying files:
 4. Inspect database schema and migration conventions when relevant.
 5. Check `git status --short` to identify pre-existing changes.
 6. Determine the smallest implementation and testing scope.
+7. Read `.codex/ARCHITECTURE.md` and verify the dependency direction for every affected module.
 
 Do not introduce unnecessary abstractions, dependencies, or unrelated refactoring.
 
 Follow existing naming conventions, folder structures, and architectural patterns.
 
 ## 3. NestJS Architecture Rules
+
+All modules MUST follow the Hexagonal Architecture boundaries in `.codex/ARCHITECTURE.md`. In particular, application/domain code must not depend on database clients, SQL, infrastructure adapters, provider SDKs, or framework configuration. Persistence and provider access must be expressed as application ports and implemented by infrastructure adapters, wired in the NestJS module.
 
 ### Controllers
 
@@ -363,16 +366,16 @@ Describe added or updated tests.
 
 ### Verification
 
-| Quality gate | Status |
-|---|---|
-| Prettier | PASS / FAIL / BLOCKED / NOT RUN |
-| ESLint | PASS / FAIL / BLOCKED / NOT RUN |
+| Quality gate          | Status                          |
+| --------------------- | ------------------------------- |
+| Prettier              | PASS / FAIL / BLOCKED / NOT RUN |
+| ESLint                | PASS / FAIL / BLOCKED / NOT RUN |
 | TypeScript type check | PASS / FAIL / BLOCKED / NOT RUN |
-| Unit tests | PASS / FAIL / BLOCKED / NOT RUN |
-| Test coverage | PASS / FAIL / BLOCKED / NOT RUN |
-| E2E tests | PASS / FAIL / BLOCKED / NOT RUN |
-| Production build | PASS / FAIL / BLOCKED / NOT RUN |
-| Git diff check | PASS / FAIL / NOT RUN |
+| Unit tests            | PASS / FAIL / BLOCKED / NOT RUN |
+| Test coverage         | PASS / FAIL / BLOCKED / NOT RUN |
+| E2E tests             | PASS / FAIL / BLOCKED / NOT RUN |
+| Production build      | PASS / FAIL / BLOCKED / NOT RUN |
+| Git diff check        | PASS / FAIL / NOT RUN           |
 
 Only report actual execution results.
 

@@ -16,16 +16,22 @@ instrument measurement.
    metadata.
 4. The backend verifies the Cloudinary response and consumes the matching,
    unexpired `SKIN_ANALYSIS` intent.
-5. The backend downloads the verified Cloudinary image. It rejects failed
-   downloads, redirects, empty images, unsupported content types, and images
-   larger than 10 MB. JPEG, PNG, and WebP are supported.
-6. The backend sends the image and analysis prompt to Gemini.
-7. The backend parses and validates the returned JSON against the skin-analysis
-   result contract. A malformed response is rejected; a valid response is
-   returned to the client.
+5. The backend persists a `QUEUED` analysis session and a transactional outbox
+   event in one PostgreSQL transaction, then returns `202 Accepted` with the
+   `sessionId` and `QUEUED` status.
+6. The outbox dispatcher publishes the event to BullMQ. A Redis outage leaves
+   the durable event pending for a later dispatcher pass.
+7. The worker atomically changes the owned session from `QUEUED` to `RUNNING`,
+   downloads the verified Cloudinary image, then invokes Gemini.
+8. The worker validates the response and transactionally persists the result
+   and observations before changing the session to `SUCCEEDED`; errors produce
+   a normalized `FAILED` session state.
 
-The request is processed synchronously. The backend does not create an
-analysis job or queue work for later processing.
+The app polls `GET /skin-analysis/:sessionId` until the session is terminal.
+BullMQ may deliver a job more than once, so only the worker that atomically
+claims `QUEUED` may call Gemini; a duplicate delivery exits without a provider
+call. A `RUNNING` lease older than the configured reclaim period may be claimed
+again after a worker crash.
 
 ## Result returned to the client
 
@@ -45,8 +51,8 @@ The structured result includes:
 - Limitations of the estimate.
 
 If Gemini returns a structurally valid result with `quality.accepted` set to
-`false`, the backend still returns that result. The quality flag and issue
-codes are part of the response for the client to interpret.
+`false`, the worker still persists that result. The quality flag and issue
+codes are part of the session result for the client to interpret.
 
 ## Business rules and limitations
 
@@ -60,20 +66,25 @@ codes are part of the response for the client to interpret.
   identifying the person or inferring protected/personal characteristics, and
   avoid medical claims. Scores are estimates based on a single image.
 - Consent is expected from the client before upload. The current API flow does
-  not collect or persist a consent record.
-- Analysis is not saved. No analysis session, analysis image, assessment
-  snapshot, result, observation, or outbox record is created by the current
-  service. The `app_skin_analysis` tables created by the database migration are
-  schema groundwork for a future persistence workflow, not evidence that
-  history is currently stored.
-- The upload intent is the only related database record in the current flow;
-  it is stored in `app_cloudinary.upload_intents`. The image itself is stored
-  in Cloudinary, and the analysis result exists only in the response unless
-  the client stores it separately.
+  not collect or persist a consent record. The product still needs a versioned
+  consent record and revocation/data-deletion behavior, especially because the
+  image is sent to a third-party AI provider. A consent table/entity exists in
+  the schema/domain, but the current request flow does not write to it.
+- The worker stores session state, validated result, and observations. It does
+  not log image bytes, image URLs, or raw provider responses.
+- The upload intent remains in `app_cloudinary.upload_intents`; Cloudinary owns
+  the image while PostgreSQL owns the analysis history and durable job intent.
+- The current analysis flow does not define an image retention/deletion SLA,
+  user-requested deletion workflow, or account-deletion cascade across
+  Cloudinary, PostgreSQL, queued jobs, and derived recommendation data.
+- AI analysis is not yet connected to persisted routine generation. The
+  recommendation feature currently uses validated metrics for catalog matching
+  only; see [Recommendations](./Recommendation.md).
 
 ## Business Workflow Sequence
 
 <!-- mermaid-checked: every participant uses `participant Id as "Label"`, no \n in aliases/messages/notes, every alt/opt/loop closed by end, no `:` inside any alias -->
+
 ```mermaid
 sequenceDiagram
     participant User as "GlowScan User"
@@ -81,6 +92,8 @@ sequenceDiagram
     participant API as "GlowScan API"
     participant DB as "PostgreSQL"
     participant Cloud as "Cloudinary"
+    participant Redis as "Redis and BullMQ"
+    participant Worker as "Analysis Worker"
     participant Gemini as "Gemini"
 
     User->>App: Give consent and choose a facial image
@@ -97,11 +110,15 @@ sequenceDiagram
     else Upload is valid
         API->>DB: Consume the one-time intent
         DB-->>API: Intent consumed
-        API->>Cloud: Download the verified image
-        Cloud-->>API: Return image bytes
-        API->>Gemini: Analyze image with the visual assessment prompt
-        Gemini-->>API: Return structured result
-        API->>API: Validate result schema
-        API-->>App: Return result without saving analysis history
+        API->>DB: Create queued session and outbox event atomically
+        API-->>App: Return 202 with sessionId and QUEUED status
+        API->>Redis: Publish durable outbox event
+        Redis->>Worker: Deliver analysis job
+        Worker->>DB: Atomically claim queued session
+        Worker->>Cloud: Download the verified image
+        Cloud-->>Worker: Return image bytes
+        Worker->>Gemini: Analyze image with the visual assessment prompt
+        Gemini-->>Worker: Return structured result
+        Worker->>DB: Validate and persist terminal result
     end
 ```

@@ -1,5 +1,4 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import {
   BadRequestException,
@@ -12,10 +11,9 @@ import {
   type UploadIntentPort,
 } from '../ports/upload-intent.port.js';
 import {
-  isExpectedCloudinaryUrl,
-  signCloudinaryParams,
-  verifyCloudinarySignature,
-} from '../../infrastructure/cloudinary-signature.js';
+  CLOUDINARY_PROVIDER_PORT,
+  type CloudinaryProviderPort,
+} from '../ports/cloudinary-provider.port.js';
 
 export interface CloudinaryUploadConfirmation {
   publicId: string;
@@ -31,7 +29,8 @@ export class CloudinaryUploadIntentService {
   constructor(
     @Inject(UPLOAD_INTENT_PORT)
     private readonly uploadIntentPort: UploadIntentPort,
-    private readonly config: ConfigService,
+    @Inject(CLOUDINARY_PROVIDER_PORT)
+    private readonly cloudinary: CloudinaryProviderPort,
   ) {}
 
   async createAvatarUploadIntent(userId: Uuid): Promise<{
@@ -64,22 +63,15 @@ export class CloudinaryUploadIntentService {
     apiKey: string;
     cloudName: string;
   }> {
-    const cloudName = this.config.getOrThrow<string>(
-      'GLOWNSCAN_CLOUDINARY_CLOUD_NAME',
-    );
-    const apiKey = this.config.getOrThrow<string>(
-      'GLOWNSCAN_CLOUDINARY_API_KEY',
-    );
-    const apiSecret = this.config.getOrThrow<string>(
-      'GLOWNSCAN_CLOUDINARY_API_SECRET',
-    );
+    const { cloudName, apiKey, apiSecret } =
+      this.cloudinary.getUploadCredentials();
     const timestamp = Math.floor(Date.now() / 1000);
     const folder = purpose === 'AVATAR' ? 'avatars' : 'skin-analysis';
     const publicId = `glownscan/${folder}/${userId}/${randomUUID()}`;
     const expiresAt = new Date(
       timestamp * 1000 + CloudinaryUploadIntentService.INTENT_TTL_MS,
     );
-    const signature = signCloudinaryParams(
+    const signature = this.cloudinary.sign(
       { public_id: publicId, timestamp },
       apiSecret,
     );
@@ -134,12 +126,7 @@ export class CloudinaryUploadIntentService {
     purpose: CloudinaryUploadPurpose,
     input: CloudinaryUploadConfirmation,
   ): void {
-    const cloudName = this.config.getOrThrow<string>(
-      'GLOWNSCAN_CLOUDINARY_CLOUD_NAME',
-    );
-    const apiSecret = this.config.getOrThrow<string>(
-      'GLOWNSCAN_CLOUDINARY_API_SECRET',
-    );
+    const { cloudName, apiSecret } = this.cloudinary.getUploadCredentials();
     const folder = purpose === 'AVATAR' ? 'avatars' : 'skin-analysis';
     const publicIdPrefix = `glownscan/${folder}/${userId}/`;
     const imageId = input.publicId.startsWith(publicIdPrefix)
@@ -149,12 +136,12 @@ export class CloudinaryUploadIntentService {
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
         imageId,
       ) ||
-      !verifyCloudinarySignature(
+      !this.cloudinary.verify(
         { public_id: input.publicId, version: input.version },
         input.signature,
         apiSecret,
       ) ||
-      !isExpectedCloudinaryUrl(
+      !this.cloudinary.isExpectedImageUrl(
         input.secureUrl,
         cloudName,
         input.publicId,

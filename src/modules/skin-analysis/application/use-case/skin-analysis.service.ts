@@ -19,6 +19,7 @@ import {
 import { TooManyRequestsException } from '../../../../shared/handler/http.exceptions.js';
 import {
   ANALYSIS_SESSION_PORT,
+  type AnalysisSessionStatus,
   type AnalysisSessionPort,
 } from '../ports/analysis-session.port.js';
 import { createHash, randomUUID } from 'node:crypto';
@@ -31,6 +32,10 @@ import {
   IMAGE_DOWNLOADER_PORT,
   type ImageDownloaderPort,
 } from '../ports/image-downloader.port.js';
+import {
+  ANALYSIS_OUTBOX_PORT,
+  type AnalysisOutboxPort,
+} from '../ports/analysis-outbox.port.js';
 
 @Injectable()
 export class SkinAnalysisService {
@@ -43,6 +48,8 @@ export class SkinAnalysisService {
     private readonly sessions: AnalysisSessionPort,
     @Inject(IMAGE_DOWNLOADER_PORT)
     private readonly imageDownloader: ImageDownloaderPort,
+    @Inject(ANALYSIS_OUTBOX_PORT)
+    private readonly outbox: AnalysisOutboxPort,
   ) {}
 
   async createUploadIntent(userId: Uuid): Promise<{
@@ -59,7 +66,7 @@ export class SkinAnalysisService {
     userId: Uuid,
     confirmation: CloudinaryUploadConfirmation,
     idempotencyKey?: string,
-  ): Promise<SkinAnalysisResult & { sessionId: Uuid; status: 'SUCCEEDED' }> {
+  ): Promise<{ sessionId: Uuid; status: AnalysisSessionStatus }> {
     if (idempotencyKey !== undefined && idempotencyKey.length > 255)
       throw new BadRequestException(
         'Idempotency-Key must not exceed 255 characters.',
@@ -73,11 +80,12 @@ export class SkinAnalysisService {
       throw new ConflictException(
         'Idempotency-Key was used with a different payload.',
       );
-    if (!claimed.created)
-      throw new ConflictException('Analysis is already being processed.');
+    if (!claimed.created) {
+      const existing = await this.sessions.findSession(userId, claimed.id);
+      return { sessionId: claimed.id, status: existing?.status ?? 'QUEUED' };
+    }
     let reservation: { id: Uuid } | null = null;
-    let providerCalled = false;
-    let sessionId: Uuid | null = claimed.id;
+    const sessionId = claimed.id;
     try {
       reservation = await this.quota.reserveAnalysis(userId);
       if (!reservation) {
@@ -90,10 +98,32 @@ export class SkinAnalysisService {
         userId,
         confirmation,
       );
-      const image = await this.imageDownloader.download(secureUrl);
-      if (!(await this.sessions.markRunning(sessionId, userId))) {
-        throw new Error('Analysis session could not start.');
+      if (
+        !(await this.sessions.queueSession(sessionId, userId, {
+          secureUrl,
+          reservationId: reservation.id,
+        }))
+      ) {
+        throw new Error('Analysis session could not be queued.');
       }
+      reservation = null;
+      return { sessionId, status: 'QUEUED' };
+    } catch (error) {
+      await this.sessions.failSession(sessionId, userId, errorCode(error));
+      throw error;
+    } finally {
+      if (reservation) await this.quota.finalizeAnalysis(reservation.id, false);
+    }
+  }
+
+  async processOutboxEvent(outboxId: Uuid): Promise<void> {
+    const work = await this.outbox.findPublished(outboxId);
+    if (!work) return;
+    if (!(await this.sessions.markRunning(work.sessionId, work.userId))) return;
+
+    let providerCalled = false;
+    try {
+      const image = await this.imageDownloader.download(work.secureUrl);
       providerCalled = true;
       const generated = await this.gemini.generateContent({
         prompt: SKIN_ANALYSIS_PROMPT,
@@ -101,18 +131,23 @@ export class SkinAnalysisService {
       });
       const result = validateSkinAnalysisResult(generated.text);
       if (
-        !(await this.persistResult(sessionId, userId, result, generated.model))
-      ) {
+        !(await this.persistResult(
+          work.sessionId,
+          work.userId,
+          result,
+          generated.model,
+        ))
+      )
         throw new Error('Analysis session could not be completed.');
-      }
-      return { ...result, sessionId, status: 'SUCCEEDED' };
     } catch (error) {
-      if (sessionId)
-        await this.sessions.failSession(sessionId, userId, errorCode(error));
+      await this.sessions.failSession(
+        work.sessionId,
+        work.userId,
+        errorCode(error),
+      );
       throw error;
     } finally {
-      if (reservation)
-        await this.quota.finalizeAnalysis(reservation.id, providerCalled);
+      await this.quota.finalizeAnalysis(work.reservationId, providerCalled);
     }
   }
 

@@ -6,6 +6,7 @@ import { CloudinaryModule } from '../cloudinary/cloudinary.module.js';
 import {
   CHANGE_PASSWORD_PORT,
   CHECK_ACTION_TOKEN_PORT,
+  DEVICE_REGISTRATION_PORT,
   FIREBASE_ID_TOKEN_VERIFIER_PORT,
   FIREBASE_LOGIN_PORT,
   LOGIN_PORT,
@@ -27,6 +28,17 @@ import { SmtpEmailService } from './infrastructure/adapters/smtp-email.service.j
 import { AuthController } from './presentation/auth.controller.js';
 import { JwtAuthGuard } from '../../shared/security/jwt-auth.guard.js';
 import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module.js';
+import { AdminGuard } from '../../shared/security/admin.guard.js';
+import { AdminAccountService } from './application/use-case/admin-account.service.js';
+import { AdminAccountController } from './presentation/admin-account.controller.js';
+import { DeviceController } from './presentation/device.controller.js';
+import { AUTHENTICATION_EMAIL_PORT } from './application/ports/authentication-email.port.js';
+import { ADMIN_ACCOUNT_PORT } from './application/ports/admin-account.port.js';
+import { PostgresAdminAccountAdapter } from './infrastructure/adapters/postgres-admin-account.adapter.js';
+import { TOKEN_RUNTIME_PORT } from './application/ports/token-runtime.port.js';
+import { JwtTokenRuntimeAdapter } from './infrastructure/adapters/jwt-token-runtime.adapter.js';
+import { PASSWORD_HASHER_PORT } from './application/ports/password-hasher.port.js';
+import { BcryptPasswordHasherAdapter } from './infrastructure/adapters/bcrypt-password-hasher.adapter.js';
 
 @Module({
   imports: [
@@ -67,7 +79,7 @@ import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module.js';
       },
     }),
   ],
-  controllers: [AuthController],
+  controllers: [AuthController, AdminAccountController, DeviceController],
   providers: [
     PostgresAuthenticationAdapter,
     {
@@ -127,10 +139,26 @@ import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module.js';
       provide: USER_PROFILE_PORT,
       useExisting: PostgresAuthenticationAdapter,
     },
+    {
+      provide: DEVICE_REGISTRATION_PORT,
+      useExisting: PostgresAuthenticationAdapter,
+    },
     AuthenticationService,
     TokenService,
+    JwtTokenRuntimeAdapter,
+    { provide: TOKEN_RUNTIME_PORT, useExisting: JwtTokenRuntimeAdapter },
     SmtpEmailService,
+    BcryptPasswordHasherAdapter,
+    { provide: PASSWORD_HASHER_PORT, useExisting: BcryptPasswordHasherAdapter },
+    {
+      provide: AUTHENTICATION_EMAIL_PORT,
+      useExisting: SmtpEmailService,
+    },
     JwtAuthGuard,
+    AdminGuard,
+    AdminAccountService,
+    PostgresAdminAccountAdapter,
+    { provide: ADMIN_ACCOUNT_PORT, useExisting: PostgresAdminAccountAdapter },
   ],
   exports: [AuthenticationService, JwtAuthGuard, JwtModule],
 })

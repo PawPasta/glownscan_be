@@ -41,9 +41,13 @@ active account if none exists. An identity or email already linked elsewhere
 is rejected rather than silently merged.
 
 Successful sign-in creates a refresh-token session for a device and returns an
-access token and refresh token. Mobile sign-in also associates the supplied
-FCM token with the device. Request IP address and user-agent are recorded with
-the refresh session.
+access token and refresh token. Mobile sign-in does not wait for Firebase: the
+app stores its session, obtains the current FCM token, then calls authenticated
+`PUT /devices/me` with a stable installation ID, platform, and token. The same
+installation ID updates the existing registration on app reopen; `DELETE
+/devices/me` disables it before logout. Logout also deactivates the push
+registration associated with the revoked refresh-token session. Request IP
+address and user-agent are recorded with the refresh session.
 
 ### Renew or end a session
 
@@ -96,3 +100,12 @@ state, device registrations, and refresh/push registrations belong to the
 the current authentication workflows do not write audit events to it. Email
 delivery is an external side effect; it does not change account state beyond
 the database actions described above.
+
+## Product gaps
+
+- Define account export, deletion/deactivation, retention, and recovery
+  workflows across authentication and dependent business data.
+- Persist security audit events for high-impact actions (role changes, password
+  resets, session revocation, and admin operations) and define access/retention.
+- Define support/admin processes for locked, suspended, compromised, or
+  duplicate-provider-linked accounts.

@@ -105,10 +105,17 @@ export class MobileLoginDto {
   @IsIn(['ANDROID', 'IOS'])
   platform!: 'ANDROID' | 'IOS';
 
+  @IsOptional()
   @IsString()
   @MinLength(1)
   @MaxLength(4096)
-  fcmToken!: string;
+  fcmToken?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(255)
+  installationId?: string;
 }
 
 export class FirebaseLoginDto {
@@ -131,10 +138,39 @@ export class FirebaseMobileLoginDto {
   @IsIn(['ANDROID', 'IOS'])
   platform!: 'ANDROID' | 'IOS';
 
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(4096)
+  fcmToken?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(255)
+  installationId?: string;
+}
+
+export class SyncDeviceDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(255)
+  installationId!: string;
+
+  @IsIn(['ANDROID', 'IOS'])
+  platform!: 'ANDROID' | 'IOS';
+
   @IsString()
   @MinLength(1)
   @MaxLength(4096)
   fcmToken!: string;
+}
+
+export class DeactivateDeviceDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(255)
+  installationId!: string;
 }
 
 export class RefreshTokenDto {
