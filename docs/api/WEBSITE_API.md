@@ -27,6 +27,12 @@ current refresh endpoint accepts access and refresh tokens in the body; cookie
 HttpOnly/CSRF web session support is not currently implemented. A website
 should not assume it can safely use the same storage strategy as Flutter.
 
+`ADMIN` and `USER` are account roles; Premium is an active subscription, not a
+role. Admin APIs require `ADMIN`. Registration and sign-in are available to
+Free users; the website may list and sell Premium packages. Premium-only
+mobile capabilities are enforced by subscription-backed permissions in the
+backend, and clients must not send a plan or role to claim access.
+
 ## Authentication used by website
 
 | Method    | Route                                               | Status      | Website use                                                     |

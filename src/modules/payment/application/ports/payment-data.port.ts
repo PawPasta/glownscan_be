@@ -65,6 +65,7 @@ export interface PaymentDataPort {
   findActivePackage(code: string): Promise<ActivePremiumPackage | null>;
   listActivePackages(): Promise<PremiumPackageOffer[]>;
   findSubscription(userId: Uuid): Promise<SubscriptionSnapshot>;
+  hasPermission(userId: Uuid, permissionCode: string): Promise<boolean>;
   getOrCreateWallet(userId: Uuid): Promise<{ balanceVnd: number }>;
   listTransactions(
     userId: Uuid,

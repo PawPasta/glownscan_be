@@ -13,6 +13,18 @@ export interface PersistedAnalysisSession {
   errorCode: string | null;
 }
 
+export type AnalysisResultView =
+  | SkinAnalysisResult
+  | {
+      quality: SkinAnalysisResult['quality'];
+      summary: SkinAnalysisResult['summary'];
+      premiumRequired: true;
+    };
+
+export type AnalysisSessionView = Omit<PersistedAnalysisSession, 'result'> & {
+  result: AnalysisResultView | null;
+};
+
 export interface AnalysisSessionPort {
   claimSession(
     userId: Uuid,

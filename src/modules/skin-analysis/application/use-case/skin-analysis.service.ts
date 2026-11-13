@@ -19,6 +19,7 @@ import {
 import { TooManyRequestsException } from '../../../../shared/handler/http.exceptions.js';
 import {
   ANALYSIS_SESSION_PORT,
+  type AnalysisSessionView,
   type AnalysisSessionStatus,
   type AnalysisSessionPort,
 } from '../ports/analysis-session.port.js';
@@ -177,15 +178,51 @@ export class SkinAnalysisService {
     throw lastError;
   }
 
-  async getSession(userId: Uuid, sessionId: Uuid) {
+  async getSession(
+    userId: Uuid,
+    sessionId: Uuid,
+    canViewPremiumDetails = false,
+  ): Promise<AnalysisSessionView> {
     const session = await this.sessions.findSession(userId, sessionId);
     if (!session)
       throw new NotFoundException('Skin analysis session was not found.');
-    return session;
+    return this.applyResultVisibility(session, canViewPremiumDetails);
   }
 
-  listSessions(userId: Uuid, page: number, limit: number) {
-    return this.sessions.listSessions(userId, limit, (page - 1) * limit);
+  async listSessions(
+    userId: Uuid,
+    page: number,
+    limit: number,
+    canViewPremiumDetails = false,
+  ) {
+    const history = await this.sessions.listSessions(
+      userId,
+      limit,
+      (page - 1) * limit,
+    );
+    return {
+      ...history,
+      items: history.items.map((session) =>
+        this.applyResultVisibility(session, canViewPremiumDetails),
+      ),
+    };
+  }
+
+  private applyResultVisibility(
+    session: NonNullable<
+      Awaited<ReturnType<AnalysisSessionPort['findSession']>>
+    >,
+    canViewPremiumDetails: boolean,
+  ): AnalysisSessionView {
+    if (canViewPremiumDetails || !session.result) return session;
+    return {
+      ...session,
+      result: {
+        quality: session.result.quality,
+        summary: session.result.summary,
+        premiumRequired: true,
+      },
+    };
   }
 }
 

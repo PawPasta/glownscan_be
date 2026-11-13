@@ -59,6 +59,17 @@ export class PostgresAnalysisQuotaAdapter implements AnalysisQuotaPort {
         [userId],
       );
       if (Number(userActive.rows[0].count) >= perUserConcurrency) return null;
+      const subscription = await client.query<{ active: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1 FROM app_billing.premium_subscriptions
+           WHERE user_id = $1 AND status = 'ACTIVE'
+             AND starts_at <= CURRENT_TIMESTAMP AND expires_at > CURRENT_TIMESTAMP
+         ) AS active`,
+        [userId],
+      );
+      const plan: 'FREE' | 'PREMIUM' = subscription.rows[0]?.active
+        ? 'PREMIUM'
+        : 'FREE';
       const entitlement = await client.query<{
         plan: 'FREE' | 'PREMIUM';
         daily_quota: number | null;
@@ -66,10 +77,13 @@ export class PostgresAnalysisQuotaAdapter implements AnalysisQuotaPort {
         `SELECT plan, daily_quota FROM app_skin_analysis.user_analysis_entitlements WHERE user_id = $1`,
         [userId],
       );
-      const plan = entitlement.rows[0]?.plan ?? 'FREE';
-      const quota =
-        entitlement.rows[0]?.daily_quota ??
-        (plan === 'PREMIUM' ? premiumQuota : freeQuota);
+      const matchingEntitlement = entitlement.rows[0]?.plan === plan;
+      const quota = matchingEntitlement
+        ? (entitlement.rows[0]?.daily_quota ??
+          (plan === 'PREMIUM' ? premiumQuota : freeQuota))
+        : plan === 'PREMIUM'
+          ? premiumQuota
+          : freeQuota;
       const usage = await client.query<{ used_count: number }>(
         `INSERT INTO app_skin_analysis.daily_analysis_usage (user_id, usage_date, used_count)
          VALUES ($1, CURRENT_DATE, 0)

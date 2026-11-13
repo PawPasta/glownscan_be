@@ -241,4 +241,44 @@ describe('SkinAnalysisService', () => {
       NotFoundException,
     );
   });
+
+  it('limits free users to the analysis status summary', async () => {
+    const { service, dependencies } = createService();
+    dependencies.sessions.findSession.mockResolvedValue({
+      id: imageId,
+      status: 'SUCCEEDED',
+      createdAt: new Date(),
+      completedAt: new Date(),
+      result: analysisResult(),
+      errorCode: null,
+    });
+
+    const session = await service.getSession(userId, imageId);
+
+    expect(session.result).toEqual({
+      quality: { accepted: true, issues: [] },
+      summary: { overallSkinScore: 90, confidence: 0.9, notes: [] },
+      premiumRequired: true,
+    });
+    expect(session.result).not.toHaveProperty('metrics');
+    expect(session.result).not.toHaveProperty('observations');
+  });
+
+  it('returns complete analysis details to Premium users and admins', async () => {
+    const { service, dependencies } = createService();
+    const result = analysisResult();
+    dependencies.sessions.findSession.mockResolvedValue({
+      id: imageId,
+      status: 'SUCCEEDED',
+      createdAt: new Date(),
+      completedAt: new Date(),
+      result,
+      errorCode: null,
+    });
+
+    const session = await service.getSession(userId, imageId, true);
+
+    expect(session.result).toEqual(result);
+    expect(session.result).not.toHaveProperty('premiumRequired');
+  });
 });

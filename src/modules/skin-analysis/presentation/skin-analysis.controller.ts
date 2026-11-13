@@ -23,16 +23,25 @@ import {
 } from './skin-analysis.dto.js';
 import { RateLimit } from '../../../shared/rate-limit/rate-limit.decorator.js';
 import { RateLimitGuard } from '../../../shared/rate-limit/rate-limit.guard.js';
+import { PaymentService } from '../../payment/application/use-case/payment.service.js';
+import {
+  AccessPermissionGuard,
+  RequirePermission,
+} from '../../../shared/security/access-permission.guard.js';
 
 @ApiTags('skin-analysis')
 @ApiBearerAuth('access-token')
 @UseGuards(JwtAuthGuard)
 @Controller('skin-analysis')
 export class SkinAnalysisController {
-  constructor(private readonly skinAnalysis: SkinAnalysisService) {}
+  constructor(
+    private readonly skinAnalysis: SkinAnalysisService,
+    private readonly payment: PaymentService,
+  ) {}
 
   @Post('upload-intent')
-  @UseGuards(RateLimitGuard)
+  @UseGuards(AccessPermissionGuard, RateLimitGuard)
+  @RequirePermission('SKIN_ANALYSIS_BASIC')
   @RateLimit({
     scope: 'skin-analysis-upload-intent',
     key: 'USER',
@@ -45,7 +54,8 @@ export class SkinAnalysisController {
 
   @Post('analyze')
   @HttpCode(HttpStatus.ACCEPTED)
-  @UseGuards(RateLimitGuard)
+  @UseGuards(AccessPermissionGuard, RateLimitGuard)
+  @RequirePermission('SKIN_ANALYSIS_BASIC')
   @RateLimit({
     scope: 'skin-analysis-analyze',
     key: 'USER',
@@ -65,18 +75,37 @@ export class SkinAnalysisController {
   }
 
   @Get()
-  history(
+  @UseGuards(AccessPermissionGuard)
+  @RequirePermission('SKIN_ANALYSIS_BASIC')
+  async history(
     @CurrentUser() user: SecurityContext,
     @Query() query: AnalysisHistoryQueryDto,
   ) {
-    return this.skinAnalysis.listSessions(user.userId, query.page, query.limit);
+    const canViewPremiumDetails =
+      user.roles.includes('ADMIN') ||
+      (await this.payment.hasPermission(user.userId, 'SKIN_ANALYSIS_DETAILS'));
+    return this.skinAnalysis.listSessions(
+      user.userId,
+      query.page,
+      query.limit,
+      canViewPremiumDetails,
+    );
   }
 
   @Get(':sessionId')
-  status(
+  @UseGuards(AccessPermissionGuard)
+  @RequirePermission('SKIN_ANALYSIS_BASIC')
+  async status(
     @CurrentUser() user: SecurityContext,
     @Param('sessionId') sessionId: string,
   ) {
-    return this.skinAnalysis.getSession(user.userId, sessionId);
+    const canViewPremiumDetails =
+      user.roles.includes('ADMIN') ||
+      (await this.payment.hasPermission(user.userId, 'SKIN_ANALYSIS_DETAILS'));
+    return this.skinAnalysis.getSession(
+      user.userId,
+      sessionId,
+      canViewPremiumDetails,
+    );
   }
 }
