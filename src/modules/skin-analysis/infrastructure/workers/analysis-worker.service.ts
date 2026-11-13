@@ -43,7 +43,11 @@ export class AnalysisWorker
       async (job) => {
         if (job.name !== PROCESS_ANALYSIS_JOB)
           throw new Error(`Unsupported analysis job: ${job.name}`);
-        await this.analysis.processOutboxEvent(job.data.outboxId);
+        await this.analysis.processOutboxEvent(
+          job.data.outboxId,
+          job.attemptsMade + 1,
+          job.opts.attempts ?? 6,
+        );
       },
       { connection: this.connection, concurrency: this.concurrency },
     );

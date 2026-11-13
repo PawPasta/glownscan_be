@@ -147,6 +147,7 @@ describe('AuthenticationService', () => {
           useValue: {
             accessTokenTtlSeconds: 900,
             refreshTokenTtlDays: 30,
+            refreshSessionAbsoluteTtlDays: 90,
             issueAccessToken: (payload: unknown) =>
               (jwt.signAsync as unknown as (value: unknown) => Promise<string>)(
                 payload,
@@ -257,7 +258,13 @@ describe('AuthenticationService', () => {
     expect(result.refreshToken).toHaveLength(43);
     expect(result).not.toHaveProperty('expiresIn');
     const [session] = repository.createRefreshSession.mock.calls[0] as [
-      { userId: string; deviceUuid: string; tokenHash: string },
+      {
+        userId: string;
+        deviceUuid: string;
+        tokenHash: string;
+        expiresAt: Date;
+        absoluteExpiresAt: Date;
+      },
     ];
     expect(session.userId).toBe(userId);
     expect(session.deviceUuid).toMatch(
@@ -265,6 +272,9 @@ describe('AuthenticationService', () => {
     );
     expect(session.tokenHash).toMatch(/^[0-9a-f]{64}$/);
     expect(session.tokenHash).not.toBe(result.refreshToken);
+    expect(session.absoluteExpiresAt.getTime()).toBeGreaterThan(
+      session.expiresAt.getTime(),
+    );
   });
 
   it('stores the FCM token when a mobile user logs in', async () => {

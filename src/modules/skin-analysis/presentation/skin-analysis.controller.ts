@@ -19,6 +19,7 @@ import { JwtAuthGuard } from '../../../shared/security/jwt-auth.guard.js';
 import { SkinAnalysisService } from '../application/use-case/skin-analysis.service.js';
 import {
   AnalysisHistoryQueryDto,
+  CreateSkinAnalysisUploadIntentDto,
   ConfirmSkinAnalysisUploadDto,
 } from './skin-analysis.dto.js';
 import { RateLimit } from '../../../shared/rate-limit/rate-limit.decorator.js';
@@ -48,8 +49,14 @@ export class SkinAnalysisController {
     limit: 10,
     windowSeconds: 60,
   })
-  createUploadIntent(@CurrentUser() user: SecurityContext) {
-    return this.skinAnalysis.createUploadIntent(user.userId);
+  createUploadIntent(
+    @CurrentUser() user: SecurityContext,
+    @Body() body: CreateSkinAnalysisUploadIntentDto,
+  ) {
+    return this.skinAnalysis.createUploadIntent(
+      user.userId,
+      body.consentAccepted,
+    );
   }
 
   @Post('analyze')

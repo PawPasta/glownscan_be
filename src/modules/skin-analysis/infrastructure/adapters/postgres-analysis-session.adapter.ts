@@ -66,7 +66,12 @@ export class PostgresAnalysisSessionAdapter implements AnalysisSessionPort {
   async queueSession(
     sessionId: Uuid,
     userId: Uuid,
-    payload: { secureUrl: string; reservationId: Uuid },
+    payload: {
+      secureUrl: string;
+      publicId: string;
+      consentVersion: string;
+      reservationId: Uuid;
+    },
   ): Promise<boolean> {
     return this.database.transaction(async (client) => {
       const queued = await client.query(
@@ -79,7 +84,21 @@ export class PostgresAnalysisSessionAdapter implements AnalysisSessionPort {
       await client.query(
         `INSERT INTO app_skin_analysis.analysis_outbox (session_id, event_type, payload)
          VALUES ($1, 'PROCESS_ANALYSIS', $2::jsonb)`,
-        [sessionId, JSON.stringify({ userId, ...payload })],
+        [
+          sessionId,
+          JSON.stringify({
+            userId,
+            secureUrl: payload.secureUrl,
+            publicId: payload.publicId,
+            reservationId: payload.reservationId,
+            providerCalled: false,
+          }),
+        ],
+      );
+      await client.query(
+        `INSERT INTO app_skin_analysis.analysis_consents (user_id, session_id, purpose, consent_version)
+         VALUES ($1, $2, 'SKIN_ANALYSIS', $3)`,
+        [userId, sessionId, payload.consentVersion],
       );
       return true;
     });
@@ -133,6 +152,15 @@ export class PostgresAnalysisSessionAdapter implements AnalysisSessionPort {
       return true;
     });
   }
+
+  async retrySession(sessionId: Uuid, userId: Uuid) {
+    await this.database.query(
+      `UPDATE app_skin_analysis.analysis_sessions
+       SET status = 'QUEUED', started_at = NULL, error_code = NULL, error_message = NULL
+       WHERE id = $1 AND user_id = $2 AND status = 'RUNNING'`,
+      [sessionId, userId],
+    );
+  }
   async failSession(
     sessionId: Uuid,
     userId: Uuid,
@@ -143,6 +171,43 @@ export class PostgresAnalysisSessionAdapter implements AnalysisSessionPort {
        WHERE id = $1 AND user_id = $2 AND status IN ('UPLOAD_PENDING', 'QUEUED', 'RUNNING')`,
       [sessionId, userId, errorCode],
     );
+  }
+
+  async failSessionAndPurgeData(
+    sessionId: Uuid,
+    userId: Uuid,
+    errorCode: string,
+  ): Promise<void> {
+    await this.database.transaction(async (client) => {
+      const updated = await client.query(
+        `UPDATE app_skin_analysis.analysis_sessions
+         SET status = 'FAILED', completed_at = CURRENT_TIMESTAMP,
+             error_code = $3, error_message = NULL, model_version = NULL,
+             prompt_version = NULL, result_schema_version = NULL
+         WHERE id = $1 AND user_id = $2 AND status IN ('QUEUED', 'RUNNING')`,
+        [sessionId, userId, errorCode],
+      );
+      if (updated.rowCount !== 1) return;
+      for (const table of [
+        'analysis_results',
+        'analysis_observations',
+        'assessment_snapshots',
+        'analysis_consents',
+        'analysis_images',
+      ]) {
+        await client.query(
+          `DELETE FROM app_skin_analysis.${table} WHERE session_id = $1`,
+          [sessionId],
+        );
+      }
+      await client.query(
+        `UPDATE app_skin_analysis.analysis_outbox
+         SET status = 'FAILED', payload = '{}'::jsonb, locked_at = NULL,
+             processed_at = CURRENT_TIMESTAMP
+         WHERE session_id = $1`,
+        [sessionId],
+      );
+    });
   }
   async findSession(
     userId: Uuid,

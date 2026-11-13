@@ -1,3 +1,4 @@
+-- Migration V12: create_payment_support_and_audit_schema
 -- Payment support, operational notification attempts, and admin audit records.
 -- Kept as CREATE-only schema definitions for the resettable sample database.
 

@@ -3,7 +3,10 @@ import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { DatabaseService } from '../../../../shared/database/database.service.js';
 import { ActionTokenPurpose } from '../../domain/entities/enums/auth.enums.js';
-import { FirebaseAccountConflictError } from '../../application/ports/index.js';
+import {
+  FirebaseAccountConflictError,
+  RefreshTokenAlreadyRotatedError,
+} from '../../application/ports/index.js';
 import type {
   AuthUserRecord,
   ChangePasswordPort,
@@ -168,21 +171,27 @@ export class PostgresAuthenticationAdapter
       );
 
       let userId = linkedIdentity.rows[0]?.user_id;
-      if (!userId) {
+      if (userId) {
         await client.query(
           `UPDATE app_auth.users
            SET status = 'ACTIVE', failed_login_count = 0, locked_until = NULL
-           WHERE email = $1 AND status = 'LOCKED'
+           WHERE id = $1 AND status = 'LOCKED'
              AND locked_until <= CURRENT_TIMESTAMP AND deleted_at IS NULL`,
-          [identity.email],
+          [userId],
         );
+      }
+      if (!userId) {
         const existingUser = await client.query<{ id: string }>(
           `SELECT id FROM app_auth.users
            WHERE email = $1 AND deleted_at IS NULL
            FOR UPDATE`,
           [identity.email],
         );
-        userId = existingUser.rows[0]?.id;
+        if (existingUser.rows[0]) {
+          // A verified provider email is not sufficient proof to merge an
+          // existing password account. Require a future authenticated link flow.
+          throw new FirebaseAccountConflictError();
+        }
 
         if (!userId) {
           const createdUser = await client.query<{ id: string }>(
@@ -212,32 +221,13 @@ export class PostgresAuthenticationAdapter
         }
       }
 
-      if (linkedIdentity.rows[0]) {
-        await client.query(
-          `UPDATE app_auth.users
-           SET status = 'ACTIVE', failed_login_count = 0, locked_until = NULL
-           WHERE id = $1 AND status = 'LOCKED'
-             AND locked_until <= CURRENT_TIMESTAMP AND deleted_at IS NULL`,
-          [userId],
-        );
-      }
-
       const user = await this.findUserByIdWithClient(client, userId);
       if (!user) {
         throw new FirebaseAccountConflictError();
       }
-      if (user.status !== 'ACTIVE' && user.status !== 'PENDING_VERIFICATION') {
+      if (user.status !== 'ACTIVE') {
         return user;
       }
-
-      await client.query(
-        `UPDATE app_auth.users
-         SET email = $2, status = 'ACTIVE',
-             email_verified_at = COALESCE(email_verified_at, CURRENT_TIMESTAMP),
-             failed_login_count = 0, locked_until = NULL
-         WHERE id = $1`,
-        [userId, identity.email],
-      );
 
       const provider = await client.query(
         `INSERT INTO app_auth.user_providers
@@ -533,6 +523,20 @@ export class PostgresAuthenticationAdapter
         );
       }
       await client.query(
+        `INSERT INTO app_auth.auth_sessions
+           (token_family_id, user_id, device_id, idle_expires_at, absolute_expires_at, ip_address, user_agent)
+         VALUES ($1, $2, $3, LEAST($4, $5), $5, $6, $7)`,
+        [
+          data.familyId,
+          data.userId,
+          device.rows[0].id,
+          data.expiresAt,
+          data.absoluteExpiresAt,
+          data.ipAddress,
+          data.userAgent,
+        ],
+      );
+      await client.query(
         `INSERT INTO app_auth.refresh_tokens
            (user_id, device_id, token_hash, token_family_id, expires_at, ip_address, user_agent)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
@@ -636,11 +640,23 @@ export class PostgresAuthenticationAdapter
         token_family_id: string;
         expires_at: Date;
         revoked_at: Date | null;
+        revoke_reason: string | null;
+        successor_created_at: Date | null;
+        session_revoked_at: Date | null;
+        idle_expires_at: Date;
+        absolute_expires_at: Date;
       }>(
-        `SELECT id, user_id, device_id, token_family_id, expires_at, revoked_at
-         FROM app_auth.refresh_tokens
-         WHERE token_hash = $1 AND user_id = $2
-         FOR UPDATE`,
+        `SELECT rt.id, rt.user_id, rt.device_id, rt.token_family_id,
+                rt.expires_at, rt.revoked_at, rt.revoke_reason,
+                successor.created_at AS successor_created_at,
+                s.revoked_at AS session_revoked_at,
+                s.idle_expires_at, s.absolute_expires_at
+         FROM app_auth.refresh_tokens rt
+         JOIN app_auth.auth_sessions s ON s.token_family_id = rt.token_family_id
+         LEFT JOIN app_auth.refresh_tokens successor
+           ON successor.id = rt.replaced_by_token_id
+         WHERE rt.token_hash = $1 AND rt.user_id = $2
+         FOR UPDATE OF rt, s`,
         [oldTokenHash, userId],
       );
       const current = rows[0];
@@ -648,22 +664,36 @@ export class PostgresAuthenticationAdapter
         return null;
       }
 
+      if (
+        current.revoked_at &&
+        current.revoke_reason === 'ROTATED' &&
+        current.successor_created_at &&
+        Date.now() - new Date(current.successor_created_at).getTime() <= 5000
+      ) {
+        // A simultaneous client refresh must not revoke the winning rotation.
+        // The duplicate request still fails; clients should use single-flight.
+        throw new RefreshTokenAlreadyRotatedError();
+      }
       if (current.revoked_at) {
-        await client.query(
-          `UPDATE app_auth.refresh_tokens
-           SET revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP),
-               revoke_reason = COALESCE(revoke_reason, 'TOKEN_REUSE')
-           WHERE token_family_id = $1 AND revoked_at IS NULL`,
-          [current.token_family_id],
+        await this.revokeTokenFamily(
+          client,
+          current.token_family_id,
+          'TOKEN_REUSE',
         );
         return null;
       }
-      if (new Date(current.expires_at) <= new Date()) {
-        await client.query(
-          `UPDATE app_auth.refresh_tokens
-           SET revoked_at = CURRENT_TIMESTAMP, revoke_reason = 'EXPIRED'
-           WHERE id = $1`,
-          [current.id],
+      if (
+        current.session_revoked_at ||
+        new Date(current.expires_at) <= new Date() ||
+        new Date(current.idle_expires_at) <= new Date() ||
+        new Date(current.absolute_expires_at) <= new Date()
+      ) {
+        await this.revokeTokenFamily(
+          client,
+          current.token_family_id,
+          new Date(current.absolute_expires_at) <= new Date()
+            ? 'ABSOLUTE_EXPIRED'
+            : 'EXPIRED',
         );
         return null;
       }
@@ -674,13 +704,35 @@ export class PostgresAuthenticationAdapter
          WHERE id = $1`,
         [current.id],
       );
+      const session = await client.query<{ idle_expires_at: Date }>(
+        `UPDATE app_auth.auth_sessions
+         SET last_refreshed_at = CURRENT_TIMESTAMP,
+             idle_expires_at = LEAST($2, absolute_expires_at)
+         WHERE token_family_id = $1 AND revoked_at IS NULL
+           AND absolute_expires_at > CURRENT_TIMESTAMP
+         RETURNING idle_expires_at`,
+        [current.token_family_id, expiresAt],
+      );
+      if (!session.rowCount) {
+        await this.revokeTokenFamily(
+          client,
+          current.token_family_id,
+          'ABSOLUTE_EXPIRED',
+        );
+        return null;
+      }
       const replacementId = randomUUID();
       await client.query(
         `INSERT INTO app_auth.refresh_tokens
            (id, user_id, device_id, token_hash, token_family_id, expires_at, ip_address, user_agent)
          SELECT $1, user_id, device_id, $2, token_family_id, $3, ip_address, user_agent
          FROM app_auth.refresh_tokens WHERE id = $4`,
-        [replacementId, newTokenHash, expiresAt, current.id],
+        [
+          replacementId,
+          newTokenHash,
+          session.rows[0].idle_expires_at,
+          current.id,
+        ],
       );
       await client.query(
         `UPDATE app_auth.refresh_tokens SET replaced_by_token_id = $1
@@ -691,6 +743,12 @@ export class PostgresAuthenticationAdapter
       if (!user || user.status !== 'ACTIVE') {
         await client.query(
           `UPDATE app_auth.refresh_tokens
+           SET revoked_at = CURRENT_TIMESTAMP, revoke_reason = 'ACCOUNT_INACTIVE'
+           WHERE token_family_id = $1 AND revoked_at IS NULL`,
+          [current.token_family_id],
+        );
+        await client.query(
+          `UPDATE app_auth.auth_sessions
            SET revoked_at = CURRENT_TIMESTAMP, revoke_reason = 'ACCOUNT_INACTIVE'
            WHERE token_family_id = $1 AND revoked_at IS NULL`,
           [current.token_family_id],
@@ -712,6 +770,12 @@ export class PostgresAuthenticationAdapter
         [tokenHash],
       );
       if (token.rowCount) {
+        await client.query(
+          `UPDATE app_auth.auth_sessions
+           SET revoked_at = CURRENT_TIMESTAMP, revoke_reason = 'LOGOUT'
+           WHERE token_family_id = $1 AND revoked_at IS NULL`,
+          [token.rows[0].token_family_id],
+        );
         await client.query(
           `UPDATE app_auth.refresh_tokens
            SET revoked_at = CURRENT_TIMESTAMP, revoke_reason = 'LOGOUT'
@@ -738,6 +802,33 @@ export class PostgresAuthenticationAdapter
        SET revoked_at = CURRENT_TIMESTAMP, revoke_reason = $2
        WHERE user_id = $1 AND revoked_at IS NULL`,
       [userId, reason],
+    );
+    await client.query(
+      `UPDATE app_auth.auth_sessions
+       SET revoked_at = CURRENT_TIMESTAMP, revoke_reason = $2
+       WHERE user_id = $1 AND revoked_at IS NULL`,
+      [userId, reason],
+    );
+  }
+
+  private async revokeTokenFamily(
+    client: PoolClient,
+    familyId: string,
+    reason: string,
+  ) {
+    await client.query(
+      `UPDATE app_auth.refresh_tokens
+       SET revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP),
+           revoke_reason = COALESCE(revoke_reason, $2)
+       WHERE token_family_id = $1 AND revoked_at IS NULL`,
+      [familyId, reason],
+    );
+    await client.query(
+      `UPDATE app_auth.auth_sessions
+       SET revoked_at = COALESCE(revoked_at, CURRENT_TIMESTAMP),
+           revoke_reason = COALESCE(revoke_reason, $2)
+       WHERE token_family_id = $1 AND revoked_at IS NULL`,
+      [familyId, reason],
     );
   }
 

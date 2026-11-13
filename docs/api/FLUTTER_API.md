@@ -130,6 +130,16 @@ Email/action-token requests:
 password is 6–72 characters; action tokens must be at least 32 characters.
 Refresh requires both `accessToken` and `refreshToken` in the JSON body.
 
+Access tokens last 15 minutes by default; refresh tokens have a 30-day sliding
+idle lifetime capped by a 90-day absolute session lifetime. Client code must
+single-flight concurrent refresh attempts and atomically persist the rotated
+pair. A duplicate old refresh token received within five seconds returns HTTP
+409 with `code: "REFRESH_TOKEN_ALREADY_ROTATED"` without revoking the winning
+session. Reuse outside that short concurrency window is treated as possible
+replay and revokes the token family. A verified Firebase email is not enough to
+link a new provider UID to an existing password account; that attempt returns a
+conflict until an explicit account-linking flow is added.
+
 `POST /auth/profile/avatar/upload-intent` has no required body. Upload the
 image directly to Cloudinary using the returned signed fields, then confirm:
 
@@ -159,7 +169,7 @@ routes normally return HTTP 201 and message `Created successfully`).
 | `POST /auth/refresh`                                                                                                                                                                                             | `{ "accessToken": "<jwt>", "refreshToken": "<rotated-opaque-token>", "expiresIn": 900 }` (`expiresIn` is seconds; use configured runtime value).                                                                                                                       |
 | `GET /auth/profile`, `PATCH /auth/profile`, `POST /auth/profile/avatar/confirm`                                                                                                                                  | `{ "profile": { "id": "<uuid>", "userId": "<uuid>", "fullName": "Nguyen An", "avatarUrl": "https://...", "dateOfBirth": "1998-04-12", "gender": "PREFER_NOT_TO_SAY", "createdAt": "<ISO-8601>", "updatedAt": "<ISO-8601>" } }`; nullable profile fields may be `null`. |
 | `POST /auth/profile/avatar/upload-intent`                                                                                                                                                                        | `{ "publicId": "glownscan/avatars/...", "timestamp": 1234567890, "signature": "<signature>", "apiKey": "<cloudinary-api-key>", "cloudName": "<cloud-name>" }`                                                                                                          |
-| `PUT /devices/me`                                                                                                                                                                                                | `{ "installationId": "<stable-installation-id>", "registered": true, "updatedAt": "<ISO-8601>" }`                                                                                                                                                                                                                   |
+| `PUT /devices/me`                                                                                                                                                                                                | `{ "installationId": "<stable-installation-id>", "registered": true, "updatedAt": "<ISO-8601>" }`                                                                                                                                                                      |
 | `DELETE /devices/me`                                                                                                                                                                                             | No response data (`undefined`; JSON serialization omits the `data` field).                                                                                                                                                                                             |
 
 The API response envelope's `status` is the HTTP status code, not a separate
@@ -177,10 +187,20 @@ business status. Never log or expose the returned access/refresh tokens.
 | GET    | `/skin-analysis?page=&limit=`  | Implemented | Read paginated history.                                                                         |
 | GET    | `/recommendations/me?limit=`   | Implemented | Read matched catalog products from assessment and eligible analysis metrics.                    |
 
-The app must obtain and explain consent before uploading facial images. The
-current backend does not persist that consent, despite a schema/entity being
-present. Analysis is asynchronous; the app should poll status rather than keep
-the create request open.
+The app must explain that the facial image is stored by Cloudinary and sent to
+Gemini before upload. The upload-intent endpoint requires explicit consent and
+records the consent version. Analysis is asynchronous; poll status rather than
+keep the create request open.
+
+`USER` is the normal account role; Premium is checked from the caller's
+currently active subscription, not from a role or client request field. Free
+users may run an analysis and receive the quality outcome and overall status
+summary, but not detailed metrics, observations, regions, or highlights. An
+active Premium package receives the full result. `ADMIN` bypasses package
+entitlement checks. Expired/refunded packages lose Premium API access
+immediately. Routine and personalized recommendation APIs return HTTP 403 with
+`code: "PREMIUM_REQUIRED"` for Free users; public catalog browsing remains
+separate and available under its own contract.
 
 ### Core request bodies
 
@@ -204,8 +224,15 @@ up to 7 unique values from `ACNE`, `REDNESS`, `DARK_SPOTS`, `PORES`, `DRYNESS`,
 to 6 unique values from `REDUCE_ACNE`, `EVEN_TONE`, `HYDRATION`, `OIL_CONTROL`,
 `ANTI_AGING`, `MAINTAIN_HEALTHY_SKIN`.
 
-`POST /skin-analysis/upload-intent` has no body. Upload the image to Cloudinary
-using the signed intent response, then submit the returned upload metadata to
+`POST /skin-analysis/upload-intent` requires consent before uploading:
+
+```json
+{ "consentAccepted": true }
+```
+
+The current consent notice covers Cloudinary storage and Gemini analysis. The
+backend records the notice version. Upload the image using the signed intent
+response, then submit the returned upload metadata to
 `POST /skin-analysis/analyze`:
 
 ```json
@@ -249,7 +276,8 @@ assessment. GET and PUT otherwise return:
   "timestamp": 1234567890,
   "signature": "<signature>",
   "apiKey": "<cloudinary-api-key>",
-  "cloudName": "<cloud-name>"
+  "cloudName": "<cloud-name>",
+  "consentVersion": "skin-analysis-consent-v1"
 }
 ```
 
@@ -270,11 +298,20 @@ Status polling returns:
 }
 ```
 
-When completed, status is `SUCCEEDED` and `result` contains the validated skin-analysis JSON (including
-`schemaVersion`, `quality`, `limitations`, and `observations`). Failed jobs
-have `status: "FAILED"`, a normalized `errorCode`, and normally a `null`
-result. History returns `{ "items": [<session>...], "total": 1 }`; `items`
-use the same session shape as status polling.
+When completed, status is `SUCCEEDED`. Premium users and admins receive the
+full validated skin-analysis JSON (including `schemaVersion`, `quality`,
+`limitations`, and `observations`). Free users receive only
+`{ "quality": { "accepted", "issues" }, "summary": { "overallSkinScore", "confidence", "notes" }, "premiumRequired": true }`.
+Failed jobs have `status: "FAILED"`, a normalized `errorCode`, and normally a
+`null` result. History returns `{ "items": [<session>...], "total": 1 }`;
+each item follows the same entitlement-aware shape as status polling.
+
+There are at most three Gemini processing attempts, one Gemini request per
+attempt, followed by up to three cleanup-only attempts if deletion/purge fails.
+Cleanup attempts do not call Gemini. Once cleanup succeeds, the backend deletes
+the Cloudinary image and analysis result data, retains a minimal `FAILED`
+session for status/history, and sends inbox, email, and FCM notices asking for
+a new upload.
 
 `GET /recommendations/me` returns:
 
@@ -306,17 +343,17 @@ matched product cards, not a persisted routine or medical advice.
 
 ## Routine lifecycle and daily completion
 
-| Method | Route | Status | Purpose |
-| --- | --- | --- | --- |
-| POST | `/routines/draft` | Implemented | Create a draft from caller assessment, latest eligible successful analysis, and matched active products. One current routine per user. |
-| GET | `/routines/current` | Implemented | Return caller's current routine or `null`. |
-| PATCH | `/routines/:id` | Implemented | Edit title and steps for an owned non-completed routine. |
-| POST | `/routines/:id/activate` | Implemented | Activate a draft or resume a paused routine. |
-| POST | `/routines/:id/pause` | Implemented | Pause an active routine. |
-| POST | `/routines/:id/complete` | Implemented | Complete/archive an owned routine. |
-| GET | `/routines/current/today` | Implemented | Load today's progress (server UTC date). |
-| PUT | `/routines/current/check-ins/:date` | Implemented | Idempotently upsert step completion and note. |
-| GET | `/routines/current/check-ins?from=&to=` | Implemented | Load check-in history over inclusive ISO dates. |
+| Method | Route                                   | Status      | Purpose                                                                                                                                |
+| ------ | --------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| POST   | `/routines/draft`                       | Implemented | Create a draft from caller assessment, latest eligible successful analysis, and matched active products. One current routine per user. |
+| GET    | `/routines/current`                     | Implemented | Return caller's current routine or `null`.                                                                                             |
+| PATCH  | `/routines/:id`                         | Implemented | Edit title and steps for an owned non-completed routine.                                                                               |
+| POST   | `/routines/:id/activate`                | Implemented | Activate a draft or resume a paused routine.                                                                                           |
+| POST   | `/routines/:id/pause`                   | Implemented | Pause an active routine.                                                                                                               |
+| POST   | `/routines/:id/complete`                | Implemented | Complete/archive an owned routine.                                                                                                     |
+| GET    | `/routines/current/today`               | Implemented | Load today's progress (server UTC date).                                                                                               |
+| PUT    | `/routines/current/check-ins/:date`     | Implemented | Idempotently upsert step completion and note.                                                                                          |
+| GET    | `/routines/current/check-ins?from=&to=` | Implemented | Load check-in history over inclusive ISO dates.                                                                                        |
 
 `POST /routines/draft`:
 
@@ -352,10 +389,25 @@ Routine response `data` example:
 
 ```json
 {
-  "id": "<routine-uuid>", "title": "Personalized skin routine", "status": "DRAFT",
-  "morningSteps": [{ "id": "<step-uuid>", "period": "MORNING", "position": 1, "title": "Cleanse", "instruction": "Gently cleanse your face and pat dry.", "optional": false, "product": null }],
-  "eveningSteps": [], "createdAt": "<ISO-8601>", "updatedAt": "<ISO-8601>",
-  "activatedAt": null, "completedAt": null
+  "id": "<routine-uuid>",
+  "title": "Personalized skin routine",
+  "status": "DRAFT",
+  "morningSteps": [
+    {
+      "id": "<step-uuid>",
+      "period": "MORNING",
+      "position": 1,
+      "title": "Cleanse",
+      "instruction": "Gently cleanse your face and pat dry.",
+      "optional": false,
+      "product": null
+    }
+  ],
+  "eveningSteps": [],
+  "createdAt": "<ISO-8601>",
+  "updatedAt": "<ISO-8601>",
+  "activatedAt": null,
+  "completedAt": null
 }
 ```
 
@@ -371,13 +423,13 @@ routine. Response data contains `date`, `completedStepIds`,
 
 ## Product detail and notification inbox
 
-| Method | Route | Status | Purpose |
-| --- | --- | --- | --- |
-| GET | `/products/:id` | Implemented | Mobile product detail and affiliate handoff; public read only. |
-| GET/PATCH | `/notification-preferences` | Implemented | Read/update caller's notification settings. |
-| GET | `/notifications?page=&limit=` | Implemented | Paginated inbox `{ items, total }`. |
-| PATCH | `/notifications/:id/read` | Implemented | Mark one owned entry read. |
-| POST | `/notifications/read-all` | Implemented | Mark all caller's unread entries read. |
+| Method    | Route                         | Status      | Purpose                                                        |
+| --------- | ----------------------------- | ----------- | -------------------------------------------------------------- |
+| GET       | `/products/:id`               | Implemented | Mobile product detail and affiliate handoff; public read only. |
+| GET/PATCH | `/notification-preferences`   | Implemented | Read/update caller's notification settings.                    |
+| GET       | `/notifications?page=&limit=` | Implemented | Paginated inbox `{ items, total }`.                            |
+| PATCH     | `/notifications/:id/read`     | Implemented | Mark one owned entry read.                                     |
+| POST      | `/notifications/read-all`     | Implemented | Mark all caller's unread entries read.                         |
 
 `PATCH /notification-preferences` accepts a partial object:
 
@@ -408,10 +460,16 @@ Product detail response data example:
 
 ```json
 {
-  "id": "<product-uuid>", "name": "Daily Moisturizer", "brand": "Example",
-  "description": "Lightweight moisturizer", "ingredients": ["Niacinamide"],
-  "usageInstructions": null, "warnings": [], "imageUrls": ["https://..."],
-  "externalUrl": "https://...", "affiliateDisclosure": "This product link may be an affiliate link."
+  "id": "<product-uuid>",
+  "name": "Daily Moisturizer",
+  "brand": "Example",
+  "description": "Lightweight moisturizer",
+  "ingredients": ["Niacinamide"],
+  "usageInstructions": null,
+  "warnings": [],
+  "imageUrls": ["https://..."],
+  "externalUrl": "https://...",
+  "affiliateDisclosure": "This product link may be an affiliate link."
 }
 ```
 

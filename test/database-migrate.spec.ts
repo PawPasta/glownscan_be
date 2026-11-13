@@ -12,9 +12,9 @@ describe('database migrations', () => {
 
   it('stores Cloudinary intents in the shared migration, not the skin schema', async () => {
     const migrations = await readMigrations();
-    const cloudinary = migrations.find(({ version }) => Number(version) === 3);
+    const cloudinary = migrations.find(({ version }) => Number(version) === 5);
     const skinAnalysis = migrations.find(
-      ({ version }) => Number(version) === 4,
+      ({ version }) => Number(version) === 8,
     );
 
     expect(cloudinary?.sql).toContain("purpose IN ('AVATAR', 'SKIN_ANALYSIS')");
@@ -38,32 +38,72 @@ describe('database migrations', () => {
     expect(auth?.sql).toContain('date_of_birth DATE');
     expect(auth?.sql).toContain('gender VARCHAR(30)');
     expect(migrations.map(({ version }) => Number(version))).toEqual([
-      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
     ]);
-    const mobile = migrations.find(({ version }) => Number(version) === 11);
+    expect(migrations.map(({ name }) => name)).toEqual([
+      'create_auth_schema',
+      'create_auth_session_lifetime_schema',
+      'seed_auth_reference_data',
+      'create_api_rate_limits_schema',
+      'create_app_cloudinary_upload_intents',
+      'create_catalog_schema',
+      'seed_demo_catalog_data',
+      'create_skin_analysis_schema',
+      'create_skin_assessment_schema',
+      'create_skin_analysis_quotas',
+      'create_wallet_and_payment_schema',
+      'create_payment_support_and_audit_schema',
+      'create_mobile_routine_and_notification_schema',
+      'create_skin_analysis_consent_schema',
+      'create_package_permission_entitlements',
+    ]);
+    const sessions = migrations.find(({ version }) => Number(version) === 2);
+    expect(sessions?.sql).toContain('CREATE TABLE app_auth.auth_sessions');
+    expect(sessions?.sql).toContain('absolute_expires_at');
+    expect(sessions?.sql).not.toMatch(/ALTER\s+TABLE/i);
+    expect(sessions?.sql).not.toContain('INSERT INTO');
+    const rateLimits = migrations.find(({ version }) => Number(version) === 4);
+    expect(rateLimits?.sql).toContain(
+      'CREATE TABLE app_security.rate_limit_windows',
+    );
+    expect(rateLimits?.sql).not.toContain('app_skin_analysis');
+    const quotas = migrations.find(({ version }) => Number(version) === 10);
+    expect(quotas?.sql).toContain(
+      'CREATE TABLE app_skin_analysis.user_analysis_entitlements',
+    );
+    expect(quotas?.sql).not.toContain('app_security');
+    const mobile = migrations.find(({ version }) => Number(version) === 13);
     expect(mobile?.sql).toContain('CREATE TABLE app_routines.routines');
     expect(mobile?.sql).toContain('CREATE TABLE app_notifications.inbox');
     expect(mobile?.sql).toContain('CREATE TABLE app_auth.device_metadata');
     expect(mobile?.sql).not.toMatch(/ALTER\s+TABLE/i);
     expect(
-      migrations.find(({ version }) => Number(version) === 6)?.sql,
+      migrations.find(({ version }) => Number(version) === 11)?.sql,
     ).toContain('CREATE SCHEMA IF NOT EXISTS app_billing');
     expect(
-      migrations.find(({ version }) => Number(version) === 6)?.sql,
+      migrations.find(({ version }) => Number(version) === 11)?.sql,
     ).toContain('CREATE TABLE IF NOT EXISTS app_billing.premium_packages');
+    const packageEntitlements = migrations.find(
+      ({ version }) => Number(version) === 15,
+    )?.sql;
+    expect(packageEntitlements).toContain(
+      'CREATE TABLE IF NOT EXISTS app_billing.premium_package_permissions',
+    );
+    expect(packageEntitlements).toContain("role.code = 'ADMIN'");
+    expect(packageEntitlements).toContain("'RECOMMENDATION_READ'");
     expect(
-      migrations.find(({ version }) => Number(version) === 7)?.sql,
+      migrations.find(({ version }) => Number(version) === 9)?.sql,
     ).toContain(
       'CREATE TABLE IF NOT EXISTS app_skin_analysis.user_assessments',
     );
     expect(
-      migrations.find(({ version }) => Number(version) === 8)?.sql,
+      migrations.find(({ version }) => Number(version) === 6)?.sql,
     ).toContain('CREATE TABLE IF NOT EXISTS app_catalog.products');
     expect(
-      migrations.find(({ version }) => Number(version) === 9)?.sql,
+      migrations.find(({ version }) => Number(version) === 7)?.sql,
     ).toContain('generate_series(1, 100)');
     const websiteOperations = migrations.find(
-      ({ version }) => Number(version) === 10,
+      ({ version }) => Number(version) === 12,
     )?.sql;
     expect(websiteOperations).toContain(
       'CREATE TABLE IF NOT EXISTS app_billing.payment_support_requests',
@@ -100,6 +140,12 @@ describe('database migrations', () => {
     );
     expect(query).toHaveBeenCalledWith(
       'DROP SCHEMA IF EXISTS app_catalog CASCADE',
+    );
+    expect(query).toHaveBeenCalledWith(
+      'DROP SCHEMA IF EXISTS app_notifications CASCADE',
+    );
+    expect(query).toHaveBeenCalledWith(
+      'DROP SCHEMA IF EXISTS app_routines CASCADE',
     );
     expect(query).toHaveBeenCalledWith(
       'DROP SCHEMA IF EXISTS app_security CASCADE',

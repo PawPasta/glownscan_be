@@ -20,7 +20,12 @@ function createService(overrides: Record<string, unknown> = {}) {
     gemini: { generateContent: vi.fn() },
     cloudinary: {
       createSkinAnalysisUploadIntent: vi.fn(),
-      confirmSkinAnalysisUpload: vi.fn().mockResolvedValue(secureUrl),
+      confirmSkinAnalysisUpload: vi.fn().mockResolvedValue({
+        secureUrl,
+        publicId,
+        consentVersion: 'skin-analysis-consent-v1',
+      }),
+      deleteSkinAnalysisImage: vi.fn().mockResolvedValue(undefined),
     },
     quota: {
       reserveAnalysis: vi.fn().mockResolvedValue({ id: outboxId }),
@@ -38,6 +43,8 @@ function createService(overrides: Record<string, unknown> = {}) {
       markRunning: vi.fn().mockResolvedValue(true),
       completeSession: vi.fn().mockResolvedValue(true),
       failSession: vi.fn().mockResolvedValue(undefined),
+      retrySession: vi.fn().mockResolvedValue(undefined),
+      failSessionAndPurgeData: vi.fn().mockResolvedValue(undefined),
       findSession: vi.fn(),
       listSessions: vi.fn(),
     },
@@ -53,8 +60,16 @@ function createService(overrides: Record<string, unknown> = {}) {
         sessionId: imageId,
         userId,
         secureUrl,
+        publicId,
         reservationId: outboxId,
+        providerCalled: false,
+        cleanupErrorCode: null,
       }),
+      markProviderCalled: vi.fn().mockResolvedValue(undefined),
+      markCleanupRequired: vi.fn().mockResolvedValue(undefined),
+    },
+    failureNotification: {
+      notifyAnalysisFailed: vi.fn().mockResolvedValue(undefined),
     },
   };
   const dependencies = { ...defaults, ...overrides } as any;
@@ -67,6 +82,7 @@ function createService(overrides: Record<string, unknown> = {}) {
       dependencies.sessions,
       dependencies.imageDownloader,
       dependencies.outbox,
+      dependencies.failureNotification,
     ),
   };
 }
@@ -114,10 +130,24 @@ describe('SkinAnalysisService', () => {
       apiKey: 'test-key',
       cloudName: 'glow-test',
     });
-    await expect(service.createUploadIntent(userId)).resolves.toMatchObject({
+    await expect(
+      service.createUploadIntent(userId, true),
+    ).resolves.toMatchObject({
       publicId,
       apiKey: 'test-key',
     });
+  });
+
+  it('does not issue an upload intent without consent', async () => {
+    const { service, dependencies } = createService();
+    await expect(
+      service.createUploadIntent(userId, false),
+    ).rejects.toMatchObject({
+      status: 400,
+    });
+    expect(
+      dependencies.cloudinary.createSkinAnalysisUploadIntent,
+    ).not.toHaveBeenCalled();
   });
 
   it('verifies the upload, reserves quota, and queues analysis without calling Gemini', async () => {
@@ -131,7 +161,12 @@ describe('SkinAnalysisService', () => {
     expect(dependencies.sessions.queueSession).toHaveBeenCalledWith(
       imageId,
       userId,
-      { secureUrl, reservationId: outboxId },
+      {
+        secureUrl,
+        publicId,
+        consentVersion: 'skin-analysis-consent-v1',
+        reservationId: outboxId,
+      },
     );
     expect(dependencies.gemini.generateContent).not.toHaveBeenCalled();
     expect(dependencies.imageDownloader.download).not.toHaveBeenCalled();
@@ -232,6 +267,81 @@ describe('SkinAnalysisService', () => {
     await service.processOutboxEvent(outboxId);
     expect(dependencies.gemini.generateContent).not.toHaveBeenCalled();
     expect(dependencies.quota.finalizeAnalysis).not.toHaveBeenCalled();
+  });
+
+  it('requeues a worker failure before the third attempt', async () => {
+    const { service, dependencies } = createService();
+    dependencies.imageDownloader.download.mockRejectedValue(
+      new Error('network'),
+    );
+    await expect(service.processOutboxEvent(outboxId, 1, 6)).rejects.toThrow(
+      'network',
+    );
+    expect(dependencies.sessions.retrySession).toHaveBeenCalledWith(
+      imageId,
+      userId,
+    );
+    expect(
+      dependencies.sessions.failSessionAndPurgeData,
+    ).not.toHaveBeenCalled();
+    expect(
+      dependencies.cloudinary.deleteSkinAnalysisImage,
+    ).not.toHaveBeenCalled();
+    expect(dependencies.quota.finalizeAnalysis).not.toHaveBeenCalled();
+  });
+
+  it('schedules cleanup after the third failed analysis attempt', async () => {
+    const { service, dependencies } = createService();
+    dependencies.imageDownloader.download.mockRejectedValue(
+      new Error('network'),
+    );
+    await expect(service.processOutboxEvent(outboxId, 3, 6)).rejects.toThrow(
+      'network',
+    );
+    expect(dependencies.outbox.markCleanupRequired).toHaveBeenCalledWith(
+      outboxId,
+      'ANALYSIS_PROCESSING_FAILED',
+    );
+    expect(
+      dependencies.cloudinary.deleteSkinAnalysisImage,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('deletes image/data and notifies during cleanup without calling Gemini again', async () => {
+    const { service, dependencies } = createService();
+    await expect(
+      service.processOutboxEvent(outboxId, 4, 6),
+    ).resolves.toBeUndefined();
+    expect(
+      dependencies.cloudinary.deleteSkinAnalysisImage,
+    ).toHaveBeenCalledWith(userId, publicId);
+    expect(dependencies.sessions.failSessionAndPurgeData).toHaveBeenCalledWith(
+      imageId,
+      userId,
+      'ANALYSIS_PROCESSING_FAILED',
+    );
+    expect(
+      dependencies.failureNotification.notifyAnalysisFailed,
+    ).toHaveBeenCalledWith(userId, imageId);
+    expect(dependencies.gemini.generateContent).not.toHaveBeenCalled();
+  });
+
+  it('retries cleanup failures without making another Gemini call', async () => {
+    const { service, dependencies } = createService();
+    dependencies.cloudinary.deleteSkinAnalysisImage.mockRejectedValueOnce(
+      new Error('Cloudinary unavailable'),
+    );
+    await expect(service.processOutboxEvent(outboxId, 4, 6)).rejects.toThrow(
+      'Cloudinary unavailable',
+    );
+    expect(dependencies.sessions.retrySession).toHaveBeenCalledWith(
+      imageId,
+      userId,
+    );
+    expect(dependencies.gemini.generateContent).not.toHaveBeenCalled();
+    expect(
+      dependencies.sessions.failSessionAndPurgeData,
+    ).not.toHaveBeenCalled();
   });
 
   it("does not disclose another user's analysis session", async () => {

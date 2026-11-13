@@ -43,19 +43,29 @@ export class CloudinaryUploadIntentService {
     return this.createUploadIntent(userId, 'AVATAR');
   }
 
-  async createSkinAnalysisUploadIntent(userId: Uuid): Promise<{
+  async createSkinAnalysisUploadIntent(
+    userId: Uuid,
+    consentVersion: string,
+  ): Promise<{
     publicId: string;
     timestamp: number;
     signature: string;
     apiKey: string;
     cloudName: string;
+    consentVersion: string;
   }> {
-    return this.createUploadIntent(userId, 'SKIN_ANALYSIS');
+    const intent = await this.createUploadIntent(
+      userId,
+      'SKIN_ANALYSIS',
+      consentVersion,
+    );
+    return { ...intent, consentVersion };
   }
 
   private async createUploadIntent(
     userId: Uuid,
     purpose: CloudinaryUploadPurpose,
+    consentVersion?: string,
   ): Promise<{
     publicId: string;
     timestamp: number;
@@ -81,6 +91,7 @@ export class CloudinaryUploadIntentService {
       purpose,
       publicId,
       expiresAt,
+      consentVersion,
     );
     return { publicId, timestamp, signature, apiKey, cloudName };
   }
@@ -106,11 +117,10 @@ export class CloudinaryUploadIntentService {
   async confirmSkinAnalysisUpload(
     userId: Uuid,
     input: CloudinaryUploadConfirmation,
-  ): Promise<string> {
+  ): Promise<{ secureUrl: string; publicId: string; consentVersion: string }> {
     this.assertValidUploadResponse(userId, 'SKIN_ANALYSIS', input);
-    const consumed = await this.uploadIntentPort.consumeIntent(
+    const consumed = await this.uploadIntentPort.consumeSkinAnalysisIntent(
       userId,
-      'SKIN_ANALYSIS',
       input.publicId,
     );
     if (!consumed) {
@@ -118,7 +128,17 @@ export class CloudinaryUploadIntentService {
         'Skin analysis upload intent is invalid or expired.',
       );
     }
-    return input.secureUrl;
+    return {
+      secureUrl: input.secureUrl,
+      publicId: input.publicId,
+      consentVersion: consumed.consentVersion,
+    };
+  }
+
+  async deleteSkinAnalysisImage(userId: Uuid, publicId: string): Promise<void> {
+    if (!publicId.startsWith(`glownscan/skin-analysis/${userId}/`))
+      throw new BadRequestException('Analysis image ownership is invalid.');
+    await this.cloudinary.deleteImage(publicId);
   }
 
   private assertValidUploadResponse(

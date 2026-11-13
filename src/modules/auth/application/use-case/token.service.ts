@@ -23,6 +23,10 @@ export class TokenService {
     return this.tokenRuntime.refreshTokenTtlDays;
   }
 
+  get refreshSessionAbsoluteTtlDays() {
+    return this.tokenRuntime.refreshSessionAbsoluteTtlDays;
+  }
+
   issueAccessToken(user: AuthUserRecord): Promise<string> {
     return this.tokenRuntime.issueAccessToken({
       sub: user.id,

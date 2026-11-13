@@ -1,4 +1,4 @@
--- Migration V7: create_skin_assessment_schema
+-- Migration V9: create_skin_assessment_schema
 -- A user's current self-reported cosmetic assessment. Analysis-session snapshots
 -- remain immutable records in app_skin_analysis.assessment_snapshots.
 

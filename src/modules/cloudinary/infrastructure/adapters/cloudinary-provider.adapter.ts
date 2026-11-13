@@ -43,4 +43,30 @@ export class CloudinaryProviderAdapter implements CloudinaryProviderPort {
   ) {
     return isExpectedCloudinaryUrl(secureUrl, cloudName, publicId, version);
   }
+
+  async deleteImage(publicId: string): Promise<void> {
+    const { cloudName, apiKey, apiSecret } = this.getUploadCredentials();
+    const timestamp = Math.floor(Date.now() / 1000);
+    const signature = this.sign({ public_id: publicId, timestamp }, apiSecret);
+    const form = new URLSearchParams({
+      public_id: publicId,
+      timestamp: String(timestamp),
+      api_key: apiKey,
+      signature,
+    });
+    const response = await fetch(
+      `https://api.cloudinary.com/v1_1/${encodeURIComponent(cloudName)}/image/destroy`,
+      { method: 'POST', body: form, signal: AbortSignal.timeout(10_000) },
+    );
+    if (!response.ok) throw new Error('Cloudinary image deletion failed.');
+    const result: unknown = await response.json();
+    if (
+      !result ||
+      typeof result !== 'object' ||
+      !['ok', 'not found'].includes(
+        String((result as { result?: unknown }).result),
+      )
+    )
+      throw new Error('Cloudinary image deletion was not confirmed.');
+  }
 }

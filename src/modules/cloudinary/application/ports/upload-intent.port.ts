@@ -9,12 +9,17 @@ export interface UploadIntentPort {
     purpose: CloudinaryUploadPurpose,
     publicId: string,
     expiresAt: Date,
+    consentVersion?: string,
   ): Promise<void>;
   consumeIntent(
     userId: Uuid,
     purpose: CloudinaryUploadPurpose,
     publicId: string,
   ): Promise<boolean>;
+  consumeSkinAnalysisIntent(
+    userId: Uuid,
+    publicId: string,
+  ): Promise<{ consentVersion: string } | null>;
   consumeAvatarIntent(
     userId: Uuid,
     publicId: string,

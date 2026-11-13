@@ -1,7 +1,8 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import {
   BadRequestException,
+  ApiException,
   ConflictException,
   ForbiddenException,
   InvalidAccessTokenException,
@@ -24,6 +25,7 @@ import {
   FIREBASE_LOGIN_PORT,
   FirebaseAccountConflictError,
   InvalidFirebaseIdTokenError,
+  RefreshTokenAlreadyRotatedError,
   LOGIN_PORT,
   LOGOUT_PORT,
   REFRESH_SESSION_PORT,
@@ -396,12 +398,24 @@ export class AuthenticationService {
     }
     const context = await this.validateAccessToken(payload);
     const replacementToken = this.tokenService.createOpaqueToken();
-    const user = await this.refreshSessionPort.rotateRefreshToken(
-      this.tokenService.hashToken(input.refreshToken),
-      this.tokenService.hashToken(replacementToken),
-      this.tokenService.expiryInDays(this.tokenService.refreshTokenTtlDays),
-      context.userId,
-    );
+    let user: AuthUserRecord | null;
+    try {
+      user = await this.refreshSessionPort.rotateRefreshToken(
+        this.tokenService.hashToken(input.refreshToken),
+        this.tokenService.hashToken(replacementToken),
+        this.tokenService.expiryInDays(this.tokenService.refreshTokenTtlDays),
+        context.userId,
+      );
+    } catch (error) {
+      if (error instanceof RefreshTokenAlreadyRotatedError) {
+        throw new ApiException(
+          HttpStatus.CONFLICT,
+          'This refresh token was already rotated. Use the newest session tokens.',
+          'REFRESH_TOKEN_ALREADY_ROTATED',
+        );
+      }
+      throw error;
+    }
     if (!user || user.status !== UserStatus.Active) {
       throw new SessionRevokedException();
     }
@@ -563,6 +577,9 @@ export class AuthenticationService {
       familyId: randomUUID(),
       expiresAt: this.tokenService.expiryInDays(
         this.tokenService.refreshTokenTtlDays,
+      ),
+      absoluteExpiresAt: this.tokenService.expiryInDays(
+        this.tokenService.refreshSessionAbsoluteTtlDays,
       ),
       ipAddress: metadata.ipAddress,
       userAgent: metadata.userAgent,

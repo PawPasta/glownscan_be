@@ -1,4 +1,4 @@
--- Migration V3: create_app_cloudinary_upload_intents
+-- Migration V5: create_app_cloudinary_upload_intents
 -- ============================================================
 
 CREATE SCHEMA IF NOT EXISTS app_cloudinary;

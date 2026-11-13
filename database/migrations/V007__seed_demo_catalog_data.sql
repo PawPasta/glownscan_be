@@ -1,4 +1,4 @@
--- Migration V9: seed_demo_catalog_data
+-- Migration V7: seed_demo_catalog_data
 -- Replace this non-production Lorem dataset through ADMIN catalog CRUD.
 
 INSERT INTO app_catalog.ingredients (name, description)

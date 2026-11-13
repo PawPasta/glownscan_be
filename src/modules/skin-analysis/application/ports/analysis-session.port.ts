@@ -34,9 +34,15 @@ export interface AnalysisSessionPort {
   queueSession(
     sessionId: Uuid,
     userId: Uuid,
-    payload: { secureUrl: string; reservationId: Uuid },
+    payload: {
+      secureUrl: string;
+      publicId: string;
+      consentVersion: string;
+      reservationId: Uuid;
+    },
   ): Promise<boolean>;
   markRunning(sessionId: Uuid, userId: Uuid): Promise<boolean>;
+  retrySession(sessionId: Uuid, userId: Uuid): Promise<void>;
   completeSession(
     sessionId: Uuid,
     userId: Uuid,
@@ -44,6 +50,11 @@ export interface AnalysisSessionPort {
     model: string,
   ): Promise<boolean>;
   failSession(sessionId: Uuid, userId: Uuid, errorCode: string): Promise<void>;
+  failSessionAndPurgeData(
+    sessionId: Uuid,
+    userId: Uuid,
+    errorCode: string,
+  ): Promise<void>;
   findSession(
     userId: Uuid,
     sessionId: Uuid,

@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { NotFoundException } from '../../../../shared/handler/http.exceptions.js';
 import type { Uuid } from '../../../../shared/types/domain.types.js';
 import {
@@ -37,9 +37,15 @@ import {
   ANALYSIS_OUTBOX_PORT,
   type AnalysisOutboxPort,
 } from '../ports/analysis-outbox.port.js';
+import {
+  ANALYSIS_FAILURE_NOTIFICATION_PORT,
+  type AnalysisFailureNotificationPort,
+} from '../../../notification/application/ports/analysis-failure-notification.port.js';
 
 @Injectable()
 export class SkinAnalysisService {
+  private static readonly CONSENT_VERSION = 'skin-analysis-consent-v1';
+  private readonly logger = new Logger(SkinAnalysisService.name);
   constructor(
     @Inject(GEMINI_GENERATIVE_MODEL_PORT)
     private readonly gemini: GeminiGenerativeModelPort,
@@ -51,16 +57,27 @@ export class SkinAnalysisService {
     private readonly imageDownloader: ImageDownloaderPort,
     @Inject(ANALYSIS_OUTBOX_PORT)
     private readonly outbox: AnalysisOutboxPort,
+    @Inject(ANALYSIS_FAILURE_NOTIFICATION_PORT)
+    private readonly failureNotification: AnalysisFailureNotificationPort,
   ) {}
 
-  async createUploadIntent(userId: Uuid): Promise<{
+  async createUploadIntent(
+    userId: Uuid,
+    consentAccepted: boolean,
+  ): Promise<{
     publicId: string;
     timestamp: number;
     signature: string;
     apiKey: string;
     cloudName: string;
+    consentVersion: string;
   }> {
-    return this.cloudinary.createSkinAnalysisUploadIntent(userId);
+    if (!consentAccepted)
+      throw new BadRequestException('Skin-analysis consent is required.');
+    return this.cloudinary.createSkinAnalysisUploadIntent(
+      userId,
+      SkinAnalysisService.CONSENT_VERSION,
+    );
   }
 
   async analyzeCloudinaryImage(
@@ -95,13 +112,15 @@ export class SkinAnalysisService {
           60,
         );
       }
-      const secureUrl = await this.cloudinary.confirmSkinAnalysisUpload(
+      const upload = await this.cloudinary.confirmSkinAnalysisUpload(
         userId,
         confirmation,
       );
       if (
         !(await this.sessions.queueSession(sessionId, userId, {
-          secureUrl,
+          secureUrl: upload.secureUrl,
+          publicId: upload.publicId,
+          consentVersion: upload.consentVersion,
           reservationId: reservation.id,
         }))
       ) {
@@ -117,15 +136,41 @@ export class SkinAnalysisService {
     }
   }
 
-  async processOutboxEvent(outboxId: Uuid): Promise<void> {
+  async processOutboxEvent(
+    outboxId: Uuid,
+    attemptNumber = 1,
+    maxAttempts = 6,
+  ): Promise<void> {
     const work = await this.outbox.findPublished(outboxId);
     if (!work) return;
     if (!(await this.sessions.markRunning(work.sessionId, work.userId))) return;
 
-    let providerCalled = false;
+    if (attemptNumber > 3) {
+      try {
+        await this.cleanupFailedAnalysis(
+          work,
+          work.cleanupErrorCode ?? 'ANALYSIS_PROCESSING_FAILED',
+        );
+        await this.quota.finalizeAnalysis(
+          work.reservationId,
+          work.providerCalled,
+        );
+      } catch (cleanupError) {
+        if (attemptNumber < maxAttempts) {
+          await this.sessions.retrySession(work.sessionId, work.userId);
+          throw cleanupError;
+        }
+        this.logger.error(
+          'Terminal analysis data cleanup failed; manual reconciliation is required.',
+        );
+        throw cleanupError;
+      }
+      return;
+    }
+
     try {
       const image = await this.imageDownloader.download(work.secureUrl);
-      providerCalled = true;
+      await this.outbox.markProviderCalled(work.id);
       const generated = await this.gemini.generateContent({
         prompt: SKIN_ANALYSIS_PROMPT,
         image,
@@ -141,14 +186,33 @@ export class SkinAnalysisService {
       )
         throw new Error('Analysis session could not be completed.');
     } catch (error) {
-      await this.sessions.failSession(
-        work.sessionId,
-        work.userId,
-        errorCode(error),
-      );
+      if (attemptNumber === 3)
+        await this.outbox.markCleanupRequired(work.id, errorCode(error));
+      await this.sessions.retrySession(work.sessionId, work.userId);
       throw error;
-    } finally {
-      await this.quota.finalizeAnalysis(work.reservationId, providerCalled);
+    }
+    await this.quota.finalizeAnalysis(work.reservationId, true);
+  }
+
+  private async cleanupFailedAnalysis(
+    work: NonNullable<Awaited<ReturnType<AnalysisOutboxPort['findPublished']>>>,
+    code: string,
+  ) {
+    await this.cloudinary.deleteSkinAnalysisImage(work.userId, work.publicId);
+    await this.sessions.failSessionAndPurgeData(
+      work.sessionId,
+      work.userId,
+      code,
+    );
+    try {
+      await this.failureNotification.notifyAnalysisFailed(
+        work.userId,
+        work.sessionId,
+      );
+    } catch {
+      this.logger.warn(
+        'Could not dispatch terminal skin-analysis notification.',
+      );
     }
   }
 

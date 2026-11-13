@@ -71,14 +71,20 @@ describe('CloudinaryUploadIntentService', () => {
   let consumeIntent: ReturnType<
     typeof vi.fn<UploadIntentPort['consumeIntent']>
   >;
+  let consumeSkinAnalysisIntent: ReturnType<
+    typeof vi.fn<UploadIntentPort['consumeSkinAnalysisIntent']>
+  >;
 
   beforeEach(() => {
     createAvatarUploadIntent = vi.fn<UploadIntentPort['createIntent']>();
     completeAvatarUpload = vi.fn<UploadIntentPort['consumeAvatarIntent']>();
     consumeIntent = vi.fn<UploadIntentPort['consumeIntent']>();
+    consumeSkinAnalysisIntent =
+      vi.fn<UploadIntentPort['consumeSkinAnalysisIntent']>();
     port = {
       createIntent: createAvatarUploadIntent,
       consumeIntent,
+      consumeSkinAnalysisIntent,
       consumeAvatarIntent: completeAvatarUpload,
     };
     provider = {
@@ -90,6 +96,7 @@ describe('CloudinaryUploadIntentService', () => {
       sign: signCloudinaryParams,
       verify: verifyCloudinarySignature,
       isExpectedImageUrl: isExpectedCloudinaryUrl,
+      deleteImage: vi.fn().mockResolvedValue(undefined),
     };
     service = new CloudinaryUploadIntentService(port, provider);
   });
@@ -110,6 +117,7 @@ describe('CloudinaryUploadIntentService', () => {
       'AVATAR',
       result.publicId,
       expect.any(Date),
+      undefined,
     );
     const expiresAt = createAvatarUploadIntent.mock.calls[0][3];
     expect(expiresAt.getTime()).toBeGreaterThan(Date.now());
@@ -119,7 +127,10 @@ describe('CloudinaryUploadIntentService', () => {
   });
 
   it('creates skin-analysis upload intents through the shared Cloudinary port', async () => {
-    const result = await service.createSkinAnalysisUploadIntent(userId);
+    const result = await service.createSkinAnalysisUploadIntent(
+      userId,
+      'skin-v1',
+    );
 
     expect(result.publicId).toMatch(
       new RegExp(`^glownscan/skin-analysis/${userId}/[0-9a-f-]{36}$`),
@@ -129,6 +140,7 @@ describe('CloudinaryUploadIntentService', () => {
       'SKIN_ANALYSIS',
       result.publicId,
       expect.any(Date),
+      'skin-v1',
     );
   });
 
@@ -193,7 +205,7 @@ describe('CloudinaryUploadIntentService', () => {
       { public_id: publicId, version: 123 },
       'api-secret',
     );
-    consumeIntent.mockResolvedValue(true);
+    consumeSkinAnalysisIntent.mockResolvedValue({ consentVersion: 'skin-v1' });
 
     await expect(
       service.confirmSkinAnalysisUpload(userId, {
@@ -202,12 +214,8 @@ describe('CloudinaryUploadIntentService', () => {
         signature,
         secureUrl,
       }),
-    ).resolves.toBe(secureUrl);
-    expect(consumeIntent).toHaveBeenCalledWith(
-      userId,
-      'SKIN_ANALYSIS',
-      publicId,
-    );
+    ).resolves.toEqual({ secureUrl, publicId, consentVersion: 'skin-v1' });
+    expect(consumeSkinAnalysisIntent).toHaveBeenCalledWith(userId, publicId);
   });
 
   it('rejects skin-analysis assets outside the requesting user folder', async () => {

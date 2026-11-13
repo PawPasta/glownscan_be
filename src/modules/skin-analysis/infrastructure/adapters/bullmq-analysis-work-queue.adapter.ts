@@ -31,7 +31,8 @@ export class BullMqAnalysisWorkQueueAdapter
       { outboxId },
       {
         jobId: outboxId,
-        attempts: this.positiveInt('GLOWNSCAN_ANALYSIS_WORKER_ATTEMPTS', 3),
+        // Three Gemini processing attempts plus three cleanup/reconciliation attempts.
+        attempts: 6,
         backoff: { type: 'exponential', delay: 1_000 },
         removeOnComplete: { age: 86_400, count: 1_000 },
         removeOnFail: { age: 604_800, count: 5_000 },
@@ -42,12 +43,5 @@ export class BullMqAnalysisWorkQueueAdapter
   async onApplicationShutdown(): Promise<void> {
     await this.queue.close();
     await this.connection.quit();
-  }
-
-  private positiveInt(name: string, fallback: number): number {
-    const value = Number(process.env[name] ?? fallback);
-    if (!Number.isInteger(value) || value < 1)
-      throw new Error(`${name} must be a positive integer.`);
-    return value;
   }
 }

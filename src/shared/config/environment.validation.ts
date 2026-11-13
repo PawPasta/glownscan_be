@@ -33,8 +33,10 @@ export function validateEnvironment(env: Record<string, unknown>) {
     'GLOWNSCAN_ANALYSIS_IMAGE_MAX_BYTES',
     'GLOWNSCAN_ANALYSIS_IMAGE_DOWNLOAD_TIMEOUT_MS',
     'GLOWNSCAN_PAYMENT_ORDER_TTL_MINUTES',
+    'GLOWNSCAN_ACCESS_TOKEN_TTL_SECONDS',
+    'GLOWNSCAN_REFRESH_TOKEN_TTL_DAYS',
+    'GLOWNSCAN_REFRESH_SESSION_ABSOLUTE_TTL_DAYS',
     'GLOWNSCAN_ANALYSIS_WORKER_CONCURRENCY',
-    'GLOWNSCAN_ANALYSIS_WORKER_ATTEMPTS',
     'GLOWNSCAN_ANALYSIS_OUTBOX_POLL_MS',
     'GLOWNSCAN_ANALYSIS_WORKER_RECLAIM_AFTER_SECONDS',
   ]) {
@@ -44,5 +46,13 @@ export function validateEnvironment(env: Record<string, unknown>) {
     )
       throw new Error(`${key} must be a positive integer.`);
   }
+  const refreshTtl = Number(env.GLOWNSCAN_REFRESH_TOKEN_TTL_DAYS ?? 30);
+  const absoluteTtl = Number(
+    env.GLOWNSCAN_REFRESH_SESSION_ABSOLUTE_TTL_DAYS ?? 90,
+  );
+  if (absoluteTtl < refreshTtl)
+    throw new Error(
+      'GLOWNSCAN_REFRESH_SESSION_ABSOLUTE_TTL_DAYS must be greater than or equal to GLOWNSCAN_REFRESH_TOKEN_TTL_DAYS.',
+    );
   return env;
 }

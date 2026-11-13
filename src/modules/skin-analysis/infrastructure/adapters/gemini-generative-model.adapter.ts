@@ -46,7 +46,8 @@ export class GeminiGenerativeModelAdapter implements GeminiGenerativeModelPort {
       'GLOWNSCAN_GEMINI_TIMEOUT_MS',
       DEFAULT_GEMINI_REQUEST_TIMEOUT_MS,
     );
-    const attempts = this.positiveInt('GLOWNSCAN_GEMINI_MAX_ATTEMPTS', 3);
+    // BullMQ owns retries: one worker attempt must produce one provider call.
+    const attempts = 1;
     let lastError: unknown;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       try {
