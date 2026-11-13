@@ -23,9 +23,18 @@ import { ANALYSIS_WORK_QUEUE_PORT } from './application/ports/analysis-work-queu
 import { BullMqAnalysisWorkQueueAdapter } from './infrastructure/adapters/bullmq-analysis-work-queue.adapter.js';
 import { AnalysisOutboxDispatcher } from './infrastructure/workers/analysis-outbox-dispatcher.service.js';
 import { AnalysisWorker } from './infrastructure/workers/analysis-worker.service.js';
+import { NotificationModule } from '../notification/notification.module.js';
+import { PaymentModule } from '../payment/payment.module.js';
 
 @Module({
-  imports: [ConfigModule, AuthModule, CloudinaryModule, RateLimitModule],
+  imports: [
+    ConfigModule,
+    AuthModule,
+    CloudinaryModule,
+    RateLimitModule,
+    NotificationModule,
+    PaymentModule,
+  ],
   controllers: [SkinAnalysisController, SkinAssessmentController],
   providers: [
     GeminiGenerativeModelAdapter,

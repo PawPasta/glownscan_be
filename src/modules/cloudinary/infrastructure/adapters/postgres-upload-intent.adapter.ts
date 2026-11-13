@@ -15,6 +15,7 @@ export class PostgresUploadIntentAdapter implements UploadIntentPort {
     purpose: CloudinaryUploadPurpose,
     publicId: string,
     expiresAt: Date,
+    consentVersion?: string,
   ): Promise<void> {
     await this.database.transaction(async (client) => {
       await client.query(
@@ -30,6 +31,32 @@ export class PostgresUploadIntentAdapter implements UploadIntentPort {
          VALUES ($1, $2, $3, $4)`,
         [userId, purpose, publicId, expiresAt],
       );
+      if (purpose === 'SKIN_ANALYSIS' && consentVersion) {
+        await client.query(
+          `INSERT INTO app_cloudinary.upload_intent_consents (upload_intent_id, consent_version)
+           SELECT id, $2 FROM app_cloudinary.upload_intents WHERE public_id = $1`,
+          [publicId, consentVersion],
+        );
+      }
+    });
+  }
+
+  async consumeSkinAnalysisIntent(userId: Uuid, publicId: string) {
+    return this.database.transaction(async (client) => {
+      const result = await client.query<{ consent_version: string }>(
+        `UPDATE app_cloudinary.upload_intents ui
+         SET consumed_at = CURRENT_TIMESTAMP
+         FROM app_cloudinary.upload_intent_consents uc
+         WHERE ui.id = uc.upload_intent_id AND ui.user_id = $1
+           AND ui.purpose = 'SKIN_ANALYSIS' AND ui.public_id = $2
+           AND ui.consumed_at IS NULL AND ui.revoked_at IS NULL
+           AND ui.expires_at > CURRENT_TIMESTAMP
+         RETURNING uc.consent_version`,
+        [userId, publicId],
+      );
+      return result.rows[0]
+        ? { consentVersion: result.rows[0].consent_version }
+        : null;
     });
   }
 

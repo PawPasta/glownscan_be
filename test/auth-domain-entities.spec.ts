@@ -2,6 +2,7 @@ import { Email } from '../src/modules/auth/domain/value-objects/email.vo.js';
 import {
   ActionToken,
   ActionTokenPurpose,
+  AuthSession,
   RefreshToken,
   User,
   UserStatus,
@@ -73,6 +74,25 @@ describe('auth domain entities', () => {
           createdAt,
         }),
     ).toThrow('A replaced token must be revoked');
+  });
+
+  it('enforces idle and absolute session expiry ordering', () => {
+    const session = new AuthSession({
+      tokenFamilyId: id,
+      userId: id,
+      deviceId: id,
+      createdAt,
+      lastRefreshedAt: createdAt,
+      idleExpiresAt: new Date('2026-01-10T00:00:00.000Z'),
+      absoluteExpiresAt: new Date('2026-02-01T00:00:00.000Z'),
+      revokedAt: null,
+      revokeReason: null,
+    });
+
+    expect(session.isActiveAt(new Date('2026-01-09T00:00:00.000Z'))).toBe(true);
+    expect(session.isActiveAt(new Date('2026-01-11T00:00:00.000Z'))).toBe(
+      false,
+    );
   });
 
   it('rejects action tokens that are both consumed and revoked', () => {

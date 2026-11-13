@@ -8,4 +8,5 @@ export interface NotificationDeliveryPort {
     title: string,
     body: string,
   ): Promise<void>;
+  dispatchAnalysisFailed(userId: string, sessionId: string): Promise<void>;
 }

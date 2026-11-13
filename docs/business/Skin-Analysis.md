@@ -8,9 +8,10 @@ instrument measurement.
 
 ## Primary workflow
 
-1. The client obtains the user's consent before uploading or analyzing a facial
-   image, then requests a user-bound upload intent from
-   `POST /skin-analysis/upload-intent`.
+1. The client explains facial-image processing by Cloudinary and Gemini and
+   obtains consent before upload. It sends `{ "consentAccepted": true }` to
+   `POST /skin-analysis/upload-intent`; the server stores the consent version
+   against that user-bound intent before issuing a signature.
 2. The client uploads the image directly to Cloudinary.
 3. The client calls `POST /skin-analysis/analyze` with the Cloudinary upload
    metadata.
@@ -24,8 +25,14 @@ instrument measurement.
 7. The worker atomically changes the owned session from `QUEUED` to `RUNNING`,
    downloads the verified Cloudinary image, then invokes Gemini.
 8. The worker validates the response and transactionally persists the result
-   and observations before changing the session to `SUCCEEDED`; errors produce
-   a normalized `FAILED` session state.
+   and observations before changing the session to `SUCCEEDED`.
+9. A failed worker attempt returns the session to `QUEUED`; BullMQ performs at
+   three total processing attempts, with one Gemini request per attempt. After
+   the third failure, up to three additional queue attempts are reserved only
+   for cleanup; they never call Gemini again. Once cleanup succeeds, the worker
+   deletes the Cloudinary image, purges analysis outputs and the outbox URL,
+   retains a minimal `FAILED` session record, then sends inbox, email, and FCM
+   notifications asking for a new image.
 
 The app polls `GET /skin-analysis/:sessionId` until the session is terminal.
 BullMQ may deliver a job more than once, so only the worker that atomically
@@ -34,6 +41,14 @@ call. A `RUNNING` lease older than the configured reclaim period may be claimed
 again after a worker crash.
 
 ## Result returned to the client
+
+Results are entitlement-aware. A Free `USER` can submit analysis and read the
+quality outcome plus overall status summary (`overallSkinScore`, confidence,
+and notes), but detailed profile, metric, region, observation, and highlight
+data is withheld. The result includes `premiumRequired: true` to explain the
+locked detail. An active Premium package or the `ADMIN` role permits the full
+validated result. Recommendations and routine endpoints require their mapped
+Premium permissions and otherwise return `403 PREMIUM_REQUIRED`.
 
 The structured result includes:
 
@@ -65,18 +80,27 @@ codes are part of the session result for the client to interpret.
 - The prompt directs Gemini to assess visible appearance only, avoid
   identifying the person or inferring protected/personal characteristics, and
   avoid medical claims. Scores are estimates based on a single image.
-- Consent is expected from the client before upload. The current API flow does
-  not collect or persist a consent record. The product still needs a versioned
-  consent record and revocation/data-deletion behavior, especially because the
-  image is sent to a third-party AI provider. A consent table/entity exists in
-  the schema/domain, but the current request flow does not write to it.
+- Consent is required before a signed upload intent is issued and is stored
+  with the upload intent and analysis session. The version records which notice
+  the client should display; the backend cannot prove what text the client
+  showed. The versioned notice must explicitly name Cloudinary and Gemini.
+  Version `skin-analysis-consent-v1` should be presented with a clear statement
+  that the facial image is uploaded to Cloudinary and shared with Google Gemini
+  for a cosmetic visual estimate, not a medical diagnosis.
 - The worker stores session state, validated result, and observations. It does
   not log image bytes, image URLs, or raw provider responses.
 - The upload intent remains in `app_cloudinary.upload_intents`; Cloudinary owns
   the image while PostgreSQL owns the analysis history and durable job intent.
-- The current analysis flow does not define an image retention/deletion SLA,
-  user-requested deletion workflow, or account-deletion cascade across
-  Cloudinary, PostgreSQL, queued jobs, and derived recommendation data.
+- After three processing attempts fail, the source image and facial-analysis
+  outputs are purged. A minimal failed session tombstone (owner, status,
+  normalized error code, timestamps, and attempt count) remains for history and
+  support; upload-intent consent evidence is retained as a minimal audit record.
+- Cloudinary deletion is attempted up to three cleanup queue attempts. If the provider remains
+  unavailable or database cleanup fails, terminal cleanup needs operational
+  reconciliation; delivery is best-effort and should be monitored.
+- User-requested deletion and account-deletion cascades across Cloudinary,
+  PostgreSQL, queued jobs, and derived recommendation data still need a
+  dedicated workflow.
 - AI analysis is not yet connected to persisted routine generation. The
   recommendation feature currently uses validated metrics for catalog matching
   only; see [Recommendations](./Recommendation.md).
@@ -95,11 +119,12 @@ sequenceDiagram
     participant Redis as "Redis and BullMQ"
     participant Worker as "Analysis Worker"
     participant Gemini as "Gemini"
+    participant Notify as "Notification Service"
 
     User->>App: Give consent and choose a facial image
-    App->>API: Request a skin-analysis upload intent
-    API->>DB: Save a user-bound intent with expiry
-    DB-->>API: Intent saved
+    App->>API: Request upload intent and accept consent
+    API->>DB: Save user-bound intent, consent version, and expiry
+    DB-->>API: Intent and consent saved
     API-->>App: Return signed Cloudinary upload parameters
     App->>Cloud: Upload image directly
     Cloud-->>App: Return signed upload metadata
@@ -120,5 +145,12 @@ sequenceDiagram
         Worker->>Gemini: Analyze image with the visual assessment prompt
         Gemini-->>Worker: Return structured result
         Worker->>DB: Validate and persist terminal result
+        alt All three Gemini processing attempts fail
+            Worker->>Cloud: Delete uploaded facial image
+            Worker->>DB: Purge analysis payload and scrub queued URL
+            Worker->>DB: Keep minimal FAILED session tombstone
+            Worker->>Notify: Dispatch failure inbox, email, and FCM
+            API-->>App: Ask user to upload a new image
+        end
     end
 ```

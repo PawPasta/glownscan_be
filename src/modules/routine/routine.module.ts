@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module.js';
+import { PaymentModule } from '../payment/payment.module.js';
 import { DatabaseModule } from '../../shared/database/database.module.js';
 import { RoutineController } from './presentation/routine.controller.js';
 import { RoutineService } from './application/use-case/routine.service.js';
@@ -9,7 +10,7 @@ import { ROUTINE_FINGERPRINT_PORT } from './application/ports/routine-fingerprin
 import { Sha256RoutineFingerprintAdapter } from './infrastructure/adapters/sha256-routine-fingerprint.adapter.js';
 
 @Module({
-  imports: [AuthModule, DatabaseModule],
+  imports: [AuthModule, DatabaseModule, PaymentModule],
   controllers: [RoutineController],
   providers: [
     RoutineService,

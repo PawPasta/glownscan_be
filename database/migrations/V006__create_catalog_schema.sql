@@ -1,4 +1,4 @@
--- Migration V8: create_catalog_schema
+-- Migration V6: create_catalog_schema
 -- Product discovery data is public-read at the API layer; writes are ADMIN-only.
 
 CREATE SCHEMA IF NOT EXISTS app_catalog;

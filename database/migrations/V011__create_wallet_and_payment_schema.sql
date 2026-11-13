@@ -1,4 +1,4 @@
--- Migration V6: create_wallet_and_payment_schema
+-- Migration V11: create_wallet_and_payment_schema
 -- Monetary amounts are integral VND. Wallet movements are immutable ledger entries.
 
 CREATE SCHEMA IF NOT EXISTS app_billing;

@@ -27,6 +27,12 @@ current refresh endpoint accepts access and refresh tokens in the body; cookie
 HttpOnly/CSRF web session support is not currently implemented. A website
 should not assume it can safely use the same storage strategy as Flutter.
 
+`ADMIN` and `USER` are account roles; Premium is an active subscription, not a
+role. Admin APIs require `ADMIN`. Registration and sign-in are available to
+Free users; the website may list and sell Premium packages. Premium-only
+mobile capabilities are enforced by subscription-backed permissions in the
+backend, and clients must not send a plan or role to claim access.
+
 ## Authentication used by website
 
 | Method    | Route                                               | Status      | Website use                                                     |
@@ -110,6 +116,16 @@ Cloudinary using the signed response, then `/auth/profile/avatar/confirm`:
 
 Avatar confirmation requires a positive integer `version`, a 40-character
 hex `signature`, and a `publicId` under the authenticated user's avatar path.
+
+Access tokens last 15 minutes by default; refresh tokens use a 30-day sliding
+idle lifetime capped by a 90-day absolute session lifetime. Web clients should
+single-flight concurrent refresh attempts and atomically persist the rotated
+pair. A duplicate old refresh token within five seconds returns HTTP 409 with
+`code: "REFRESH_TOKEN_ALREADY_ROTATED"` and does not revoke the winning
+session. Reuse outside that window revokes the family as possible replay. A
+verified Firebase email does not silently link a new provider identity to an
+existing password account; the endpoint returns a conflict until a secure link
+flow is available.
 
 ### Authentication response data
 

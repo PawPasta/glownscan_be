@@ -1,4 +1,5 @@
 import {
+  Equals,
   IsInt,
   IsOptional,
   IsString,
@@ -7,6 +8,11 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
+
+export class CreateSkinAnalysisUploadIntentDto {
+  @Equals(true)
+  consentAccepted!: true;
+}
 
 export class ConfirmSkinAnalysisUploadDto {
   @IsString()

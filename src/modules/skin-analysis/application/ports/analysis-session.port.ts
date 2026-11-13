@@ -13,6 +13,18 @@ export interface PersistedAnalysisSession {
   errorCode: string | null;
 }
 
+export type AnalysisResultView =
+  | SkinAnalysisResult
+  | {
+      quality: SkinAnalysisResult['quality'];
+      summary: SkinAnalysisResult['summary'];
+      premiumRequired: true;
+    };
+
+export type AnalysisSessionView = Omit<PersistedAnalysisSession, 'result'> & {
+  result: AnalysisResultView | null;
+};
+
 export interface AnalysisSessionPort {
   claimSession(
     userId: Uuid,
@@ -22,9 +34,15 @@ export interface AnalysisSessionPort {
   queueSession(
     sessionId: Uuid,
     userId: Uuid,
-    payload: { secureUrl: string; reservationId: Uuid },
+    payload: {
+      secureUrl: string;
+      publicId: string;
+      consentVersion: string;
+      reservationId: Uuid;
+    },
   ): Promise<boolean>;
   markRunning(sessionId: Uuid, userId: Uuid): Promise<boolean>;
+  retrySession(sessionId: Uuid, userId: Uuid): Promise<void>;
   completeSession(
     sessionId: Uuid,
     userId: Uuid,
@@ -32,6 +50,11 @@ export interface AnalysisSessionPort {
     model: string,
   ): Promise<boolean>;
   failSession(sessionId: Uuid, userId: Uuid, errorCode: string): Promise<void>;
+  failSessionAndPurgeData(
+    sessionId: Uuid,
+    userId: Uuid,
+    errorCode: string,
+  ): Promise<void>;
   findSession(
     userId: Uuid,
     sessionId: Uuid,

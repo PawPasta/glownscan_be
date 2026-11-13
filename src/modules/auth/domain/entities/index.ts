@@ -1,4 +1,5 @@
 export { ActionToken } from './action-token.entity.js';
+export { AuthSession } from './auth-session.entity.js';
 export { AuthAuditLog } from './auth-audit-log.entity.js';
 export {
   ActionTokenPurpose,

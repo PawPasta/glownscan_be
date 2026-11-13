@@ -37,6 +37,10 @@ export class PaymentService {
     return this.paymentData.findSubscription(userId);
   }
 
+  hasPermission(userId: Uuid, permissionCode: string): Promise<boolean> {
+    return this.paymentData.hasPermission(userId, permissionCode);
+  }
+
   createTopUp(userId: Uuid, amountVnd: number) {
     return this.createOrder(userId, 'TOP_UP', amountVnd, null, null);
   }

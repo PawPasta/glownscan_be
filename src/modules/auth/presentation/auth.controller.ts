@@ -91,11 +91,25 @@ export class AuthController {
   }
 
   @Post('verify-email')
+  @UseGuards(RateLimitGuard)
+  @RateLimit({
+    scope: 'auth-verify-email',
+    key: 'IP',
+    limit: 10,
+    windowSeconds: 900,
+  })
   verifyEmail(@Body() body: VerifyEmailDto) {
     return this.authentication.verifyEmail(body);
   }
 
   @Post('verify-email/check')
+  @UseGuards(RateLimitGuard)
+  @RateLimit({
+    scope: 'auth-verify-email-check',
+    key: 'IP',
+    limit: 30,
+    windowSeconds: 900,
+  })
   checkEmailVerification(@Body() body: CheckActionTokenDto) {
     return this.authentication.checkEmailVerification(body);
   }
@@ -171,11 +185,20 @@ export class AuthController {
   }
 
   @Post('refresh')
+  @UseGuards(RateLimitGuard)
+  @RateLimit({
+    scope: 'auth-refresh',
+    key: 'IP',
+    limit: 60,
+    windowSeconds: 900,
+  })
   refresh(@Body() body: RefreshTokenDto) {
     return this.authentication.refresh(body);
   }
 
   @Post('logout')
+  @UseGuards(RateLimitGuard)
+  @RateLimit({ scope: 'auth-logout', key: 'IP', limit: 30, windowSeconds: 900 })
   logout(@Body() body: LogoutTokenDto) {
     return this.authentication.logout(body.refreshToken);
   }
@@ -205,11 +228,25 @@ export class AuthController {
   }
 
   @Post('password/reset/check')
+  @UseGuards(RateLimitGuard)
+  @RateLimit({
+    scope: 'auth-password-reset-check',
+    key: 'IP',
+    limit: 30,
+    windowSeconds: 900,
+  })
   checkPasswordReset(@Body() body: CheckActionTokenDto) {
     return this.authentication.checkPasswordReset(body);
   }
 
   @Post('password/reset/confirm')
+  @UseGuards(RateLimitGuard)
+  @RateLimit({
+    scope: 'auth-password-reset-confirm',
+    key: 'IP',
+    limit: 10,
+    windowSeconds: 900,
+  })
   resetPassword(@Body() body: ResetPasswordDto) {
     return this.authentication.resetPassword(body);
   }

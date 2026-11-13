@@ -27,4 +27,5 @@ export interface NotificationDataPort {
     body: string,
     payload: Record<string, string>,
   ): Promise<void>;
+  createAnalysisFailureInbox(userId: string, sessionId: string): Promise<void>;
 }

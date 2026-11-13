@@ -20,4 +20,5 @@ export interface CloudinaryProviderPort {
     publicId: string,
     version: number,
   ): boolean;
+  deleteImage(publicId: string): Promise<void>;
 }

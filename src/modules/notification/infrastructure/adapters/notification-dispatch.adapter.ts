@@ -93,6 +93,57 @@ export class NotificationDispatchAdapter implements NotificationDeliveryPort {
     }
   }
 
+  async dispatchAnalysisFailed(
+    userId: string,
+    sessionId: string,
+  ): Promise<void> {
+    const [user, tokens] = await Promise.all([
+      this.database.query<{ email: string }>(
+        `SELECT email FROM app_auth.users WHERE id = $1 AND deleted_at IS NULL`,
+        [userId],
+      ),
+      this.database.query<{ registration_value: string }>(
+        `SELECT pr.registration_value FROM app_auth.push_registrations pr
+         JOIN app_auth.user_devices ud ON ud.id = pr.device_id
+         WHERE ud.user_id = $1 AND pr.provider = 'FCM'
+           AND pr.registration_type = 'FCM_TOKEN' AND pr.status = 'ACTIVE'
+           AND pr.notification_enabled = TRUE
+           AND COALESCE((SELECT analysis_updates FROM app_notifications.user_preferences WHERE user_id = $1), TRUE) = TRUE`,
+        [userId],
+      ),
+    ]);
+    const title = 'Skin analysis needs a new photo';
+    const body =
+      'We could not complete your analysis after three attempts. The uploaded photo and analysis data were deleted. Please upload a new photo to try again.';
+    const tasks: Promise<unknown>[] = [];
+    if (tokens.rows.length) {
+      tasks.push(
+        this.messaging.sendEachForMulticast({
+          tokens: tokens.rows.map((row) => row.registration_value),
+          notification: { title, body },
+          data: { type: 'ANALYSIS_FAILED', sessionId, action: 'UPLOAD_AGAIN' },
+        }),
+      );
+    }
+    const email = user.rows[0]?.email;
+    if (email) {
+      tasks.push(
+        this.transporter.sendMail({
+          from: this.from,
+          to: email,
+          subject: `GlowScan - ${title}`,
+          text: body,
+          html: `<p>${escapeHtml(body)}</p>`,
+        }),
+      );
+    }
+    const results = await Promise.allSettled(tasks);
+    if (results.some((result) => result.status === 'rejected'))
+      this.logger.warn(
+        'One or more skin-analysis failure notifications failed.',
+      );
+  }
+
   private async trackDelivery(
     orderId: string,
     channel: 'FCM' | 'EMAIL',

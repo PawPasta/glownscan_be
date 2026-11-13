@@ -46,6 +46,7 @@ export interface RefreshSessionData {
   tokenHash: string;
   familyId: Uuid;
   expiresAt: Date;
+  absoluteExpiresAt: Date;
   ipAddress: string | null;
   userAgent: string | null;
 }
@@ -142,6 +143,13 @@ export interface RefreshSessionPort {
     expiresAt: Date,
     userId: Uuid,
   ): Promise<AuthUserRecord | null>;
+}
+
+export class RefreshTokenAlreadyRotatedError extends Error {
+  constructor() {
+    super('Refresh token was already rotated by a concurrent request.');
+    this.name = 'RefreshTokenAlreadyRotatedError';
+  }
 }
 
 export interface LogoutPort {

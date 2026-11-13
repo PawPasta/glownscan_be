@@ -2,6 +2,11 @@
 
 ## Current product recommendations
 
+This personalized endpoint is gated by the `RECOMMENDATION_READ` package
+permission. Only an active Premium subscription (or `ADMIN`) receives a
+personalized response; a Free user receives `403 PREMIUM_REQUIRED`. This is
+separate from public catalog browsing, which is not personalized.
+
 `GET /recommendations/me` requires an access token and derives the owner from
 that token. The backend loads the caller's current self-reported skin
 assessment and latest successful, accepted skin-analysis result, maps concerns

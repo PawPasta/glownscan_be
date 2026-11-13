@@ -39,7 +39,7 @@ export class FirebaseIdTokenVerifier implements FirebaseIdTokenVerifierPort {
   async verifyIdToken(idToken: string): Promise<FirebaseIdentityClaims> {
     let decoded;
     try {
-      decoded = await this.auth.verifyIdToken(idToken);
+      decoded = await this.auth.verifyIdToken(idToken, true);
     } catch (error) {
       if (
         error instanceof FirebaseAuthError &&

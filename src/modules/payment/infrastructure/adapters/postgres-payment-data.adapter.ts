@@ -100,6 +100,34 @@ export class PostgresPaymentDataAdapter implements PaymentDataPort {
     };
   }
 
+  async hasPermission(userId: Uuid, permissionCode: string): Promise<boolean> {
+    const result = await this.database.query<{ granted: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1
+         FROM app_auth.user_roles user_role
+         JOIN app_auth.role_permissions role_permission
+           ON role_permission.role_id = user_role.role_id
+         JOIN app_auth.permissions permission
+           ON permission.id = role_permission.permission_id
+         WHERE user_role.user_id = $1 AND permission.code = $2
+         UNION ALL
+         SELECT 1
+         FROM app_billing.premium_subscriptions subscription
+         JOIN app_billing.premium_package_permissions package_permission
+           ON package_permission.package_code = subscription.package_code
+         JOIN app_auth.permissions premium_permission
+           ON premium_permission.id = package_permission.permission_id
+         WHERE subscription.user_id = $1
+           AND subscription.status = 'ACTIVE'
+           AND subscription.starts_at <= CURRENT_TIMESTAMP
+           AND subscription.expires_at > CURRENT_TIMESTAMP
+           AND premium_permission.code = $2
+       ) AS granted`,
+      [userId, permissionCode],
+    );
+    return result.rows[0]?.granted ?? false;
+  }
+
   async getOrCreateWallet(userId: Uuid) {
     return this.database.transaction(async (client) => {
       await client.query(

@@ -10,6 +10,7 @@ import type {
 export class JwtTokenRuntimeAdapter implements TokenRuntimePort {
   readonly accessTokenTtlSeconds: number;
   readonly refreshTokenTtlDays: number;
+  readonly refreshSessionAbsoluteTtlDays: number;
   private readonly issuer: string;
   private readonly audience: string;
 
@@ -23,6 +24,9 @@ export class JwtTokenRuntimeAdapter implements TokenRuntimePort {
     this.refreshTokenTtlDays = Number(
       config.get<string>('GLOWNSCAN_REFRESH_TOKEN_TTL_DAYS', '30'),
     );
+    this.refreshSessionAbsoluteTtlDays = Number(
+      config.get<string>('GLOWNSCAN_REFRESH_SESSION_ABSOLUTE_TTL_DAYS', '90'),
+    );
     this.issuer = config.get<string>('GLOWNSCAN_JWT_ISSUER', 'glownscan-api');
     this.audience = config.get<string>(
       'GLOWNSCAN_JWT_AUDIENCE',
@@ -32,7 +36,9 @@ export class JwtTokenRuntimeAdapter implements TokenRuntimePort {
       !Number.isInteger(this.accessTokenTtlSeconds) ||
       this.accessTokenTtlSeconds < 60 ||
       !Number.isInteger(this.refreshTokenTtlDays) ||
-      this.refreshTokenTtlDays < 1
+      this.refreshTokenTtlDays < 1 ||
+      !Number.isInteger(this.refreshSessionAbsoluteTtlDays) ||
+      this.refreshSessionAbsoluteTtlDays < this.refreshTokenTtlDays
     ) {
       throw new Error('JWT and refresh token expiration settings are invalid.');
     }

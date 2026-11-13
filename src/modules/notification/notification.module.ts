@@ -8,6 +8,7 @@ import { NotificationDispatchAdapter } from './infrastructure/adapters/notificat
 import { NotificationController } from './presentation/notification.controller.js';
 import { NOTIFICATION_DATA_PORT } from './application/ports/notification-data.port.js';
 import { PostgresNotificationDataAdapter } from './infrastructure/adapters/postgres-notification-data.adapter.js';
+import { ANALYSIS_FAILURE_NOTIFICATION_PORT } from './application/ports/analysis-failure-notification.port.js';
 
 @Module({
   imports: [ConfigModule, DatabaseModule, AuthModule],
@@ -24,7 +25,11 @@ import { PostgresNotificationDataAdapter } from './infrastructure/adapters/postg
       provide: NOTIFICATION_DELIVERY_PORT,
       useExisting: NotificationDispatchAdapter,
     },
+    {
+      provide: ANALYSIS_FAILURE_NOTIFICATION_PORT,
+      useExisting: NotificationService,
+    },
   ],
-  exports: [NotificationService],
+  exports: [NotificationService, ANALYSIS_FAILURE_NOTIFICATION_PORT],
 })
 export class NotificationModule {}

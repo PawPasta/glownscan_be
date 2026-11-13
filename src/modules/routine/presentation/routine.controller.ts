@@ -13,6 +13,10 @@ import {
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../../shared/security/jwt-auth.guard.js';
 import {
+  AccessPermissionGuard,
+  RequirePermission,
+} from '../../../shared/security/access-permission.guard.js';
+import {
   CurrentUser,
   type SecurityContext,
 } from '../../../shared/security/security.context.js';
@@ -26,7 +30,8 @@ import {
 
 @ApiTags('routines')
 @ApiBearerAuth('access-token')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, AccessPermissionGuard)
+@RequirePermission('ROUTINE_MANAGE')
 @Controller('routines')
 export class RoutineController {
   constructor(private readonly routines: RoutineService) {}

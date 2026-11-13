@@ -3,6 +3,10 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { IsInt, IsOptional, Max, Min } from 'class-validator';
 import { JwtAuthGuard } from '../../../shared/security/jwt-auth.guard.js';
 import {
+  AccessPermissionGuard,
+  RequirePermission,
+} from '../../../shared/security/access-permission.guard.js';
+import {
   CurrentUser,
   type SecurityContext,
 } from '../../../shared/security/security.context.js';
@@ -12,7 +16,8 @@ class RecommendationQueryDto {
 }
 @ApiTags('recommendations')
 @ApiBearerAuth('access-token')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, AccessPermissionGuard)
+@RequirePermission('RECOMMENDATION_READ')
 @Controller('recommendations')
 export class RecommendationController {
   constructor(

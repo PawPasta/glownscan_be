@@ -94,4 +94,13 @@ export class PostgresNotificationDataAdapter implements NotificationDataPort {
       [userId, title, body, JSON.stringify(payload)],
     );
   }
+
+  async createAnalysisFailureInbox(userId: string, sessionId: string) {
+    await this.database.query(
+      `INSERT INTO app_notifications.inbox (user_id, type, title, body, payload)
+       VALUES ($1, 'ANALYSIS_FAILED', 'Skin analysis could not be completed',
+         'After three attempts, the uploaded photo and analysis data were deleted. Please upload a new photo to try again.', $2::jsonb)`,
+      [userId, JSON.stringify({ sessionId, action: 'UPLOAD_AGAIN' })],
+    );
+  }
 }

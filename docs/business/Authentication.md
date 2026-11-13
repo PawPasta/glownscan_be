@@ -2,110 +2,224 @@
 
 ## Purpose
 
-Authentication lets a GlowScan user create an account, verify ownership of an
-email address, sign in, and maintain or recover access to that account.
+Authentication establishes account ownership and manages the user's credentials,
+sessions, recovery actions, and sign-in providers. All protected API ownership
+is derived from the authenticated server-side security context; clients must not
+choose an owner by sending `userId`.
 
-## Main workflows
+## Roles, permissions, and Premium entitlements
 
-### Register and verify an email
+`ADMIN` and `USER` are account roles; Premium is a time-bounded subscription,
+not a role. Registration assigns `USER` and does not require payment. The
+access-policy seed grants `ADMIN` every permission and grants `USER` the
+ordinary profile/device permissions plus `SKIN_ANALYSIS_BASIC`.
 
-1. The user submits an email, password, and password confirmation to
-   `POST /auth/register`.
-2. The backend normalizes and validates the email and password, checks that the
-   confirmation matches, and hashes the password.
-3. In one database transaction, the backend creates a pending account, assigns
-   the standard `USER` role, and stores a one-time email-verification token
-   hash. The raw token is sent to the user's email.
-4. The user submits the email and token to `POST /auth/verify-email`.
-5. If the matching token is unexpired and unused, the backend consumes it and
-   changes the account to `ACTIVE`.
+Premium package permissions are stored separately from role permissions. An
+active, not-yet-expired subscription grants the permissions mapped to its
+package in `app_billing.premium_package_permissions`. Current Premium packages
+grant `SKIN_ANALYSIS_DETAILS`, `RECOMMENDATION_READ`, and `ROUTINE_MANAGE`.
+Access checks use the subscription period in PostgreSQL, not a client-supplied
+plan, role claim, or stale analysis-quota row. Expired/refunded subscriptions
+lose these permissions automatically. `ADMIN` bypasses package checks; it does
+not bypass infrastructure protections such as global rate or concurrency
+limits.
 
-The user may request a new verification email through
-`POST /auth/verify-email/resend`. A new token revokes any previous pending
-verification token. The check endpoint reports whether a verification token
-has already been consumed; it does not consume the token.
+Free users may sign in, complete their skin assessment, and submit an image for
+a basic cosmetic status summary. They cannot read detailed metrics,
+observations, or highlights, and cannot access personalized recommendation or
+routine APIs. These premium-only APIs return HTTP 403 with
+`code: "PREMIUM_REQUIRED"`. Public catalog browsing is not a personalized
+recommendation and remains available according to the catalog API contract.
 
-### Sign in
+## Account lifecycle
 
-The backend supports password sign-in (`POST /auth/login`), mobile
-password sign-in (`POST /auth/mobile/login`), Firebase sign-in
-(`POST /auth/firebase/login`), and mobile Firebase sign-in
-(`POST /auth/firebase/mobile/login`).
+### Register and verify email
 
-For password sign-in, the backend finds the account by normalized email,
-compares the submitted password with its stored hash, and requires the account
-to be active. A pending account must verify its email before signing in.
-Firebase sign-in requires a valid Firebase identity with a verified email;
-the backend links it to an existing account with that email or creates an
-active account if none exists. An identity or email already linked elsewhere
-is rejected rather than silently merged.
+1. `POST /auth/register` accepts email, password, and confirmation. The backend
+   normalizes email, validates the password, hashes it, and transactionally
+   creates a `PENDING_VERIFICATION` user, `USER` role, and one-time verification
+   token hash.
+2. The raw token is sent by email. It is not stored in PostgreSQL.
+3. `POST /auth/verify-email` consumes an unexpired token once and activates the
+   account. Resend revokes the prior outstanding token and creates a replacement.
+4. The `/check` route reports whether that exact token was consumed; it is not
+   a token-validity preflight.
 
-Successful sign-in creates a refresh-token session for a device and returns an
-access token and refresh token. Mobile sign-in does not wait for Firebase: the
-app stores its session, obtains the current FCM token, then calls authenticated
-`PUT /devices/me` with a stable installation ID, platform, and token. The same
-installation ID updates the existing registration on app reopen; `DELETE
-/devices/me` disables it before logout. Logout also deactivates the push
-registration associated with the revoked refresh-token session. Request IP
-address and user-agent are recorded with the refresh session.
+Email delivery currently happens after the database transaction. If SMTP fails,
+the account/action-token state may already have committed; durable email outbox
+and retry handling remain planned. Reset and resend responses remain generic to
+avoid account enumeration.
 
-### Renew or end a session
+### Password sign-in and lockout
 
-- `POST /auth/refresh` validates the access-token identity and rotates the
-  refresh token. The old token is revoked and a replacement token is issued.
-  Reuse of a revoked token revokes the active token in that token family.
-- `POST /auth/logout` revokes the refresh-token family, ending the session.
-- Protected routes require an active account and a token version matching the
-  current account record. This allows password changes and resets to invalidate
-  previously issued access tokens.
+`POST /auth/login` and `POST /auth/mobile/login` verify the password against the
+stored bcrypt hash and require an active account. A pending account must verify
+its email. Five consecutive incorrect password attempts lock the account for
+15 minutes; successful login clears the counter. The current policy is
+account-wide and should be reviewed for denial-of-service risk.
 
-### Recover or change a password
+Mobile login does not depend on FCM. After the access/refresh pair is stored,
+the app registers or refreshes its installation through `PUT /devices/me`.
+Device registration is independent from the authentication session, although
+logout also disables the registration associated with the logged-out session.
 
-1. The user requests a reset at `POST /auth/password/reset/request`.
-2. If the account exists, the backend creates a one-hour, one-time reset token
-   and emails its raw value to the user. The response is intentionally generic
-   whether or not an account exists.
-3. The user submits the email, token, and new password to
-   `POST /auth/password/reset/confirm`.
-4. A valid token is consumed, the password hash is replaced, the account token
-   version is incremented, and all refresh sessions are revoked.
+### Firebase sign-in and account linking
 
-An authenticated user can instead call `POST /auth/password/change` with the
-current and new passwords. The new password must differ from the current one;
-changing it also invalidates existing sessions, so the user must sign in again.
+`POST /auth/firebase/login` and `/auth/firebase/mobile/login` require a Firebase
+ID token whose signature, audience, issuer, expiry, and revocation status are
+checked by Firebase Admin. The token must assert a verified email.
 
-## Business rules
+- An already-linked Firebase UID may sign in only to its linked active local
+  account. A suspended, pending, deleted, or currently locked account is not
+  activated by provider sign-in.
+- A first-time Firebase UID may create a new active account if the normalized
+  email is not already attached to a local account.
+- Matching a verified Firebase email to an existing password account is not
+  sufficient to link identities. The API returns a conflict; an explicit,
+  authenticated account-linking flow is not implemented yet.
+- Firebase revocation checking increases provider dependency/latency; transient
+  Firebase verification errors fail closed rather than creating a local login.
 
-- New password accounts remain `PENDING_VERIFICATION` until email verification
-  succeeds.
-- Email addresses are normalized before account lookup and creation.
-- Passwords are stored as hashes; action-token values and refresh-token values
-  are stored as hashes rather than raw tokens.
-- Five consecutive incorrect password attempts lock an active account for
-  15 minutes. A successful login clears the failed-attempt count.
-- Locked accounts can become active again after the lock period when looked up
-  for sign-in; suspended, deleted, or otherwise inactive accounts cannot sign
-  in.
-- Verification tokens expire after 24 hours. Password-reset tokens expire after
-  one hour. Each action token is single-use; issuing a replacement revokes the
-  previous pending token for that purpose.
-- Access-token and refresh-token lifetimes are configurable. Defaults are
-  15 minutes and 30 days, respectively.
+### Session creation, refresh, and revocation
 
-## Business data
+Password and Firebase sign-in create an opaque refresh token with 256 bits of
+randomness. PostgreSQL stores only its SHA-256 hash. The token belongs to a
+device and a stable token family; request IP and user-agent metadata are stored
+for operational investigation. Access JWTs include issuer, audience, expiry,
+and `tokenVersion`. Protected requests compare that version and active account
+status with PostgreSQL.
 
-Account status, profile identity, roles, Firebase provider links, action-token
-state, device registrations, and refresh/push registrations belong to the
-`app_auth` context. The schema includes an authentication audit-log table, but
-the current authentication workflows do not write audit events to it. Email
-delivery is an external side effect; it does not change account state beyond
-the database actions described above.
+`POST /auth/refresh` currently requires both the access token and refresh token
+in the JSON body. The access JWT signature, issuer, audience, and token version
+are checked; expiry is ignored only for this refresh validation. A valid,
+unexpired database refresh token is then rotated while its row and session are
+locked transactionally.
 
-## Product gaps
+The session uses a sliding idle lifetime, capped by an absolute lifetime:
 
-- Define account export, deletion/deactivation, retention, and recovery
-  workflows across authentication and dependent business data.
-- Persist security audit events for high-impact actions (role changes, password
-  resets, session revocation, and admin operations) and define access/retention.
-- Define support/admin processes for locked, suspended, compromised, or
-  duplicate-provider-linked accounts.
+- Access token: 15 minutes by default (`GLOWNSCAN_ACCESS_TOKEN_TTL_SECONDS`).
+- Refresh idle lifetime: 30 days by default
+  (`GLOWNSCAN_REFRESH_TOKEN_TTL_DAYS`).
+- Absolute session lifetime: 90 days by default
+  (`GLOWNSCAN_REFRESH_SESSION_ABSOLUTE_TTL_DAYS`); it must not be shorter than
+  the idle lifetime.
+
+The absolute boundary is persisted in `app_auth.auth_sessions`; refreshing can
+extend idle expiry but never extend the session past its absolute expiry.
+Migration V002 creates this table for a clean schema initialization. The
+current migration set is a resettable baseline and does not backfill sessions
+for an existing database.
+
+Refresh token state and reuse behavior:
+
+```text
+ACTIVE --successful rotation--> ROTATED + successor ACTIVE
+  |                                  |
+  | idle/absolute expiry             | duplicate within 5 seconds
+  v                                  v
+REVOKED                           HTTP 409 REFRESH_TOKEN_ALREADY_ROTATED
+                                     (winning session stays active)
+
+ROTATED token replay after the grace window --> revoke active family
+logout/password reset/change                --> revoke active family
+```
+
+The five-second duplicate window prevents two near-simultaneous requests from
+revoking the winning rotation, but does not issue the successor twice. Flutter
+and website clients must implement single-flight refresh, persist the new token
+pair atomically, and retry the original safe request at most once. A stale retry
+outside the window is treated as possible replay and revokes the family. If a
+response containing the newly rotated token is lost, the client may need to
+authenticate again; encrypted successor-token recovery is intentionally not
+implemented.
+
+`POST /auth/logout` revokes the whole token family. Password change and reset
+increment `token_version` and revoke active refresh sessions, so old access JWTs
+and refresh tokens stop working. Existing access JWTs are checked against the
+database on each protected request.
+
+### Password recovery and change
+
+Reset tokens are random, single-use, stored as hashes, and expire after one
+hour. Verification tokens expire after 24 hours. Password reset and password
+change invalidate sessions. Reset request/resend responses are intentionally
+generic. Registration/reset/change currently use a 6–72 character password
+contract plus the domain password policy; longer passphrase-first rules and
+compromised-password screening remain a product/security decision.
+
+## Abuse controls
+
+Login, registration, resend, reset request, verify, refresh, logout, action-token
+checks, and reset confirmation have endpoint-specific limits backed by the
+shared PostgreSQL rate-limit store. Limits are currently keyed by `request.ip`;
+deployment must ensure the app is reachable only through the trusted proxy and
+that proxy forwarding is configured deliberately. The current app does not
+blindly trust arbitrary `X-Forwarded-For` headers. Per-account/device controls,
+progressive backoff, rate-limit metrics, and shared-carrier NAT analysis remain
+follow-up work.
+
+## Hexagonal architecture
+
+The module uses these inward dependencies:
+
+```text
+AuthController / DeviceController / AdminAccountController
+                         |
+                         v
+ AuthenticationService / TokenService / AdminAccountService
+       |             |              |             |
+       v             v              v             v
+ application ports: auth use cases, token runtime, password hash, email
+       ^             ^              ^             ^
+       |             |              |             |
+ PostgreSQL adapter  JWT adapter   bcrypt adapter  SMTP adapter
+ Firebase verifier   (JWT library)  (bcryptjs)     (nodemailer)
+                         |
+                    AuthModule
+             (composition root / DI)
+```
+
+`presentation/` owns transport DTOs, guards, and HTTP routes. `application/`
+coordinates workflows through typed ports and maps expected failures to API
+errors. `domain/` owns account/session/token concepts and value objects.
+`infrastructure/adapters/` contains PostgreSQL transactions, JWT/Firebase SDK
+calls, password hashing, and SMTP delivery. `auth.module.ts` binds interfaces to
+implementations. Application/domain code must not import SQL clients, Firebase,
+JWT, SMTP, or adapter classes. See
+[Auth module architecture](../architecture/Auth-Architecture.md).
+
+Refresh rotation and credential invalidation are adapter-level atomic database
+operations. The application decides the policy and token material; the adapter
+locks records, changes session/token state, and returns a typed account result.
+Raw refresh/action tokens must never cross persistence ports or logs.
+
+## Data and API boundaries
+
+The `app_auth` schema contains users, profiles, roles/permissions, Firebase
+provider identities, devices, push registrations, refresh-token records,
+action-token records, and the existing auth audit-log table. V002 creates the
+server-side auth-session table. Public request/response bodies are documented in
+the [Flutter API contract](../api/FLUTTER_API.md) and
+[Website API contract](../api/WEBSITE_API.md).
+
+## Remaining auth work
+
+- Add disposable-PostgreSQL integration tests for real locking, rotation,
+  uniqueness, reset invalidation, Firebase-link concurrency, and migrations.
+- Implement authenticated session list/revoke-one/revoke-others endpoints with
+  safe device metadata.
+- Add an explicit account-linking flow requiring current-account proof.
+- Persist auth security events in `app_auth.auth_audit_logs`; define retention,
+  read permissions, redaction, and alerting.
+- Make verification/reset email dispatch transactional and retryable without
+  retaining raw action tokens in plaintext outbox rows.
+- Test rate limits behind the real Nginx topology; add trusted-proxy
+  configuration, metrics, and shared-IP fairness controls.
+- Define web HttpOnly-cookie/CSRF refresh handling before changing the current
+  body-token contract.
+- Split `AuthenticationService` and `PostgresAuthenticationAdapter` by business
+  transaction responsibility after integration-test coverage exists; avoid a
+  behavior-changing line-count-only refactor.
+
+The roadmap is a prioritized hardening plan, not a claim of a completed pentest
+or proof that every production deployment is configured securely.

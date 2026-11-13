@@ -11,10 +11,13 @@ purpose.
 
 1. The authenticated client requests an upload intent. Avatar uploads use
    `POST /auth/profile/avatar/upload-intent`; skin-analysis images use
-   `POST /skin-analysis/upload-intent`.
+   `POST /skin-analysis/upload-intent` with `{ "consentAccepted": true }` after
+   showing the versioned Cloudinary/Gemini processing notice.
 2. The backend creates a unique `publicId` under the authenticated user's
    `glownscan/avatars/` or `glownscan/skin-analysis/` path, signs the upload
-   parameters, and saves an intent with its purpose and expiration.
+   parameters, and saves an intent with its purpose and expiration. For
+   analysis uploads it also records the consent version before issuing a
+   signature.
 3. The client uploads the image directly to Cloudinary using the returned
    `cloudName`, `apiKey`, `timestamp`, `publicId`, and `signature`. The image
    bytes do not pass through the backend during this upload.
@@ -47,15 +50,16 @@ the complete processing flow.
 - The public ID is scoped to the authenticated user and includes a unique image
   identifier.
 - The intent record stores upload metadata, not image bytes or the returned
-  URL. Cloudinary stores the uploaded image.
+  URL. A related consent record stores only the notice version and acceptance
+  time. Cloudinary stores the uploaded image.
 - For analysis images, the backend accepts JPEG, PNG, or WebP and limits the
   downloaded image to 10 MB. These content checks are applied during
   analysis, not by the Cloudinary upload itself.
-- A retention duration, deletion-on-request/account-deletion workflow, and
-  verification that Cloudinary assets are removed after the analysis lifecycle
-  are not yet documented as an enforceable product policy.
-- A failed analysis after intent consumption requires a new upload intent and
-  upload before retrying.
+- After three failed Gemini processing attempts, cleanup jobs try up to three
+  times to delete the Cloudinary asset and analysis payload. The failure notice
+  asks the user to obtain a fresh intent and upload again.
+- Retention and user-requested/account-deletion workflows for successful
+  analyses still need a product policy and enforceable lifecycle job.
 
 ## Business data
 
