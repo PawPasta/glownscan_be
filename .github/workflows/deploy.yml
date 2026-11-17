@@ -122,10 +122,63 @@ jobs:
       - name: Build application
         run: npm run build
 
+  changes:
+    name: Detect deployment-relevant changes
+    runs-on: ubuntu-latest
+
+    outputs:
+      deploy: ${{ steps.detect.outputs.deploy }}
+
+    steps:
+      - name: Checkout source
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether deployment is required
+        id: detect
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          BEFORE: ${{ github.event.before }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$BEFORE" =~ ^0+$ ]]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null && ! git fetch --no-tags --depth=1 origin "$BEFORE"; then
+            echo "Could not fetch the previous commit; deploying as a safe fallback."
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          deploy=false
+          while IFS= read -r -d '' path; do
+            case "$path" in
+              docs/*|test/*|tests/*|*.md|*.spec.ts|*.e2e-spec.ts|*.test.ts)
+                ;;
+              *)
+                deploy=true
+                break
+                ;;
+            esac
+          done < <(git diff --name-only -z "$BEFORE" "$GITHUB_SHA")
+
+          if [[ "$deploy" == "true" ]]; then
+            echo "Changes include files outside documentation and tests; deployment is required."
+          else
+            echo "Changes are limited to documentation and tests; image build and deployment will be skipped."
+          fi
+          echo "deploy=$deploy" >> "$GITHUB_OUTPUT"
+
   docker:
     name: Build and Push Image
-    needs: ci
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [ci, changes]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.deploy == 'true'
     runs-on: ubuntu-latest
 
     permissions:
@@ -172,35 +225,31 @@ jobs:
 
     permissions:
       contents: read
-      id-token: write
 
     steps:
-      - name: Validate OIDC role configuration
-        shell: bash
-        env:
-          AWS_DEPLOY_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
-        run: |
-          set -euo pipefail
-          if [[ -z "$AWS_DEPLOY_ROLE_ARN" ]]; then
-            echo "::error::Set repository variable AWS_DEPLOY_ROLE_ARN to the IAM role trusted by GitHub OIDC."
-            exit 1
-          fi
-          if [[ ! "$AWS_DEPLOY_ROLE_ARN" =~ ^arn:aws:iam::[0-9]{12}:role/.+ ]]; then
-            echo "::error::AWS_DEPLOY_ROLE_ARN must be an IAM role ARN."
-            exit 1
-          fi
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
-          role-session-name: glownscan-github-deploy
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-southeast-2
-          audience: sts.amazonaws.com
-          output-env-credentials: true
 
-      - name: Verify assumed AWS role
-        run: aws sts get-caller-identity
+      - name: Verify AWS identity
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IDENTITY=$(aws sts get-caller-identity --output json)
+          ACCOUNT_ID=$(jq -r '.Account' <<< "$IDENTITY")
+          PRINCIPAL_ARN=$(jq -r '.Arn' <<< "$IDENTITY")
+
+          echo "AWS account: $ACCOUNT_ID"
+          echo "AWS principal: $PRINCIPAL_ARN"
+
+          if [[ "$ACCOUNT_ID" != "877886324433" || "$PRINCIPAL_ARN" != "arn:aws:iam::877886324433:user/GlownScanGitHubActions" ]]; then
+            echo "::error::AWS credentials do not identify the expected GlownScan deployment IAM user."
+            exit 1
+          fi
 
       - name: Verify EC2 is managed by SSM
         shell: bash

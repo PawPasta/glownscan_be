@@ -33,7 +33,7 @@ status - stdout and stderr from the command invocation
 
 Never expose credentials or environment values in logs.
 
-## Common failure: OIDC credentials could not be loaded
+## Common failure: AWS credentials could not be loaded
 
 Error:
 
@@ -42,18 +42,22 @@ Credentials could not be loaded, please check your action inputs:
 Could not load credentials from any providers
 ```
 
-Check that repository variable `AWS_DEPLOY_ROLE_ARN` contains the complete
-IAM role ARN and that `role-to-assume` is passed to
-`aws-actions/configure-aws-credentials@v4`. The deploy job must grant
-`id-token: write`. In IAM, verify the GitHub OIDC provider audience is
-`sts.amazonaws.com` and the role trust policy subject matches
-`repo:PawPasta/glownscan_be:ref:refs/heads/main`. The workflow sets region
+Confirm repository secrets `AWS_ACCESS_KEY_ID` and
+`AWS_SECRET_ACCESS_KEY` both exist and are active, matching credentials for
+`GlownScanGitHubActions`. Do not print their values. The workflow sets region
 `ap-southeast-2` directly; it does not need an `AWS_REGION` variable.
+`aws sts get-caller-identity` displays the principal and account, not the
+secret.
+
+For `InvalidClientTokenId`, check whether the key is active. For
+`SignatureDoesNotMatch`, verify that the secrets are a matching key pair; if
+the secret was lost, create a replacement key in IAM.
 
 ## Common failure: SSM access denied
 
--   Confirm `GlownScanGitHubSSMDeployPolicy` is attached to the GitHub
-    Actions OIDC role.
+-   Confirm `GlownScanGitHubSSMDeployPolicy` is attached to IAM user
+    `GlownScanGitHubActions` and grants only the SSM actions/resources the
+    workflow needs.
 -   Confirm the region, account ID, instance ID, document ARN, and
     resource permissions.
 -   Confirm the EC2 instance is registered with SSM.

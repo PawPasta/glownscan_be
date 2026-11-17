@@ -10,7 +10,7 @@ EC2. This avoids needing GitHub-hosted runners to connect to SSH port
 
 -   Region: `ap-southeast-2`
 -   EC2 instance: `i-009ee9f9e537e232b`
--   GitHub Actions OIDC deployment role: verify the configured role ARN in GitHub repository variables.
+-   GitHub Actions IAM user: `GlownScanGitHubActions`
 -   Custom IAM policy: `GlownScanGitHubSSMDeployPolicy`
 -   EC2 role documented during setup: `GlownScanEC2SSMRole`
 -   EC2 managed policy: `AmazonSSMManagedInstanceCore`
@@ -46,13 +46,17 @@ it in the Systems Manager Console:
 If it is not Online, check the EC2 role, agent status, network egress,
 and Systems Manager registration.
 
-## C. GitHub Actions OIDC role
+## C. GitHub Actions IAM user
 
-GitHub Actions authenticates with GitHub OIDC and an IAM role; it does not use
-long-lived AWS access keys. Create an IAM OIDC provider for
-`token.actions.githubusercontent.com`, restrict the role trust policy to this
-repository and the `main` branch, then set `AWS_DEPLOY_ROLE_ARN` as a GitHub
-repository variable. The workflow requires the `id-token: write` permission.
+The current deploy workflow authenticates as `GlownScanGitHubActions` using
+the repository secrets `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. The
+user needs only the SSM deployment permissions listed below. Store the access
+key in GitHub Actions Secrets; never put it in variables, workflow YAML, or
+documentation.
+
+An existing GitHub OIDC provider or deployment role is not used by this
+workflow. Do not delete those AWS resources because another workflow or
+repository may still depend on them.
 
 The custom policy should permit only the deployment operations required.
 A baseline policy for this exact instance is:
@@ -95,22 +99,28 @@ the exact resource-level authorization requirements against the AWS
 actions in use. If the workflow adds SSM actions, update the policy
 narrowly rather than granting broad `ssm:*`.
 
+`sts:GetCallerIdentity` does not require a separate IAM `Allow` statement.
+The deploy workflow uses it to verify the account and IAM user before it
+checks EC2/SSM access.
+
 ## D. Create or update the policy
 
 1.  Open IAM → Policies.
 2.  Open `GlownScanGitHubSSMDeployPolicy`.
 3.  Edit the JSON policy.
 4.  Review the policy and save the new version as default.
-5.  Open IAM → Roles and select the GitHub OIDC deployment role.
-6.  Confirm the policy is attached to that role.
+5.  Open IAM → Users → `GlownScanGitHubActions` → Permissions.
+6.  Confirm the policy is attached to that user.
 
 Saving a policy does not automatically attach it to an identity.
 
-## E. Configure GitHub repository variables
+## E. Configure GitHub repository secrets and variables
 
-Set `AWS_DEPLOY_ROLE_ARN` under **Settings → Secrets and variables → Actions
-→ Variables**. The workflow uses the fixed region `ap-southeast-2` and needs
-no long-lived AWS access keys.
+Create repository secrets `AWS_ACCESS_KEY_ID` and
+`AWS_SECRET_ACCESS_KEY` using the active key pair for
+`GlownScanGitHubActions`. Keep `EC2_INSTANCE_ID` as a repository variable.
+The workflow uses the fixed region `ap-southeast-2`. Rotate the access key
+periodically and disable a superseded key after confirming deployment.
 
 ## F. Test SSM access
 
@@ -130,9 +140,10 @@ Expected: account `877886324433` and a managed-node row with
 
 ## Security notes
 
--   Do not use `AdministratorAccess` for the GitHub Actions role.
+-   Do not use `AdministratorAccess` for the GitHub Actions IAM user.
 -   Restrict SSM `SendCommand` to the intended document and instance
     wherever supported.
--   Keep EC2 instance role and GitHub Actions OIDC role separate; they
+-   Keep the EC2 instance role and GitHub Actions IAM user separate; they
     serve different purposes.
--   Review CloudTrail role-assumption activity periodically.
+-   Review CloudTrail access-key activity and rotate the user's key
+    periodically.

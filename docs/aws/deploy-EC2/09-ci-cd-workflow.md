@@ -2,42 +2,58 @@
 
 ## Goal
 
-The pipeline validates the NestJS backend on pushes and pull requests
-targeting `main`. On pushes to `main` that change application or image
-inputs, it also builds and publishes a container image and deploys the
-exact commit to EC2 using SSM.
+The workflow validates the NestJS backend on pushes and pull requests
+targeting `main`. A push to `main` that contains any non-documentation or
+non-test change also builds and publishes a container image, then deploys
+that exact commit to EC2 using SSM.
 
-The current setup was tested far enough to pull an image through SSM and
-start the container. Always compare this guide with the workflow files
-currently in `.github/workflows/`; the repository workflow is the source
-of truth.
+Always compare this guide with `.github/workflows/deploy.yml`; the workflow
+is the source of truth if implementation details change.
 
 ## Intended pipeline
 
-1.  **CI:** lint, tests, and build on every workflow run.
-2.  **Build and publish:** every push to `main` builds a Docker image and
-    pushes it to GHCR using the commit SHA as tag, including merges that only
-    change documentation or workflow configuration.
-3.  **Deploy:** only after an image is published, configure AWS
+1.  **CI:** install dependencies, format-check, lint, typecheck, run unit
+    tests and coverage gates, apply the test database schema, run E2E tests,
+    audit production dependencies, scan committed secrets, and build on every
+    push/PR targeting `main` and every manual dispatch.
+2.  **Change classification:** on pushes to `main`, compare the pushed commit
+    with the previous commit. The image build is skipped only when every
+    changed path is documentation or a test.
+3.  **Build and publish:** if change classification requires deployment,
+    build a Docker image and push both `latest` and the commit SHA tag to
+    GHCR.
+4.  **Deploy:** only after CI succeeds and an image is published, configure AWS
     credentials, send a command using SSM, and wait for command
     completion.
-4.  **Verify:** check deployment/health status and preserve logs on
+5.  **Verify:** check deployment/health status and preserve logs on
     failure.
 
-Every push or merge commit on `main` runs CI, builds and publishes the image,
-then deploys that exact image to EC2. Pull requests targeting `main` run CI
-only; they do not deploy.
+### When deployment is skipped
 
-The workflow should deploy only from `main` unless a deliberate release
-process says otherwise. A test workflow with `workflow_dispatch` can be
-run manually from a feature branch to validate AWS access without
-deploying.
+The workflow skips image build and EC2 deployment only if **all** changed
+files match one of these documentation/test categories:
+
+- Files under `docs/`, `test/`, or `tests/`.
+- Markdown files (`*.md`) anywhere in the repository.
+- TypeScript test files (`*.spec.ts`, `*.e2e-spec.ts`, or `*.test.ts`).
+
+If even one changed file is outside those categories—for example a source
+file, migration, Dockerfile, package manifest, workflow, or configuration—the
+workflow builds and deploys. If the previous commit cannot be resolved, the
+workflow deploys as a safe fallback instead of incorrectly skipping.
+
+CI still runs for documentation/test-only changes. Pull requests run CI only;
+they do not build/publish images or deploy. `workflow_dispatch` also runs CI
+only; production build/deploy is restricted to pushes on `main`.
+
+Production deployment is restricted to pushes on `main`. Manual dispatch is
+useful for rerunning CI, but does not validate AWS access or deploy.
 
 ## Immutable image tags
 
 Use a tag derived from the commit SHA, for example:
 
-``` text
+```text
 ghcr.io/pawpasta/glownscan_be:a1e919c11a3e271a4e15c0f358f7275e6f52b780
 ```
 
@@ -46,74 +62,69 @@ and to roll back to a previously known image.
 
 ## Deployment behavior
 
-The deployment script should:
+The current deployment script does the following:
 
-1.  Run as the intended deployment user (currently `ubuntu`).
-2.  Pull the exact image tag.
-3.  Record the currently deployed image for rollback.
-4.  Stop/remove or replace `glownscan-api` in a controlled way.
-5.  Start the new container with `--env-file /opt/glownscan/.env`.
-6.  Bind host port only to loopback, e.g. `127.0.0.1:3000:3000`.
-7.  Check `/health/database`.
-8.  If the new container fails, capture logs and attempt to restore the
-    previous image.
+1. Runs as the intended deployment user (currently `ubuntu`).
+2. Pulls the exact image tag.
+3. Records the currently deployed image for rollback.
+4. Runs forward-only database migrations.
+5. Stops/removes `glownscan-api` and starts the new container with
+   `--env-file /opt/glownscan/.env`.
+6. Bind host port only to loopback, e.g. `127.0.0.1:3000:3000`.
+7. Checks `/health/database`.
+8. If startup or health validation fails, captures logs and attempts to
+   restore the previous image.
 
-Do not paste a deployment script into production without checking
-quoting, image substitution, command exit behavior, and rollback paths.
-Base64-encoding a script can help transport it through SSM, but the
-script still needs to be decoded and validated correctly on the host.
+The script is transported as base64 through SSM and executes Docker commands
+as `ubuntu`. If startup or the database health check fails, it restores the
+previous image; it does not roll back database schema changes. Schema changes
+must therefore remain compatible with the previous application version.
 
 ## SSM command permissions
 
-The GitHub Actions OIDC role needs permission to send
+The GitHub Actions IAM user `GlownScanGitHubActions` needs permission to send
 `AWS-RunShellScript` to the intended EC2 instance and read command
 status/output. See `07-iam-and-ssm.md`.
 
-The EC2 node must be Online in SSM before deployment. The workflow
-should fail clearly if no managed node is found.
-
-## Manual AWS access test
-
-A test workflow with:
-
-``` yaml
-on:
-  workflow_dispatch:
-```
-
-can be run from GitHub Actions to validate `sts get-caller-identity` and
-SSM status without changing the application. Keep this separate from the
-deploy workflow.
+The EC2 node must be Online in SSM before deployment. The workflow checks
+this before sending the deployment command. AWS credentials are obtained from
+the `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` repository secrets; see
+`08-github-actions-secrets.md`.
 
 ## Operational safeguards
 
--   Require CI success before deployment.
--   Limit production deployment to `main`.
--   Use environment protection/review if the team needs approval before
-    production deployment.
--   Do not print `.env`, access keys, registry tokens, or database URLs
-    in logs.
--   Keep deployment logs and command IDs for troubleshooting.
--   Avoid overlapping deployments; use GitHub Actions concurrency where
-    appropriate.
--   Do not delete the prior image until the rollback window has passed.
+- Require CI success before deployment.
+- Limit production deployment to `main`.
+- Use environment protection/review if the team needs approval before
+  production deployment.
+- Do not print `.env`, access keys, registry tokens, or database URLs
+  in logs.
+- Keep deployment logs and command IDs for troubleshooting.
+- Avoid overlapping deployments; use GitHub Actions concurrency where
+  appropriate.
+- Do not delete the prior image until the rollback window has passed.
 
 ## Troubleshooting checklist
 
 ### `Credentials could not be loaded` / `Could not load credentials from any providers`
 
-The configure-credentials step must include `role-to-assume`; the workflow
-uses `${{ vars.AWS_DEPLOY_ROLE_ARN }}`. Set that repository variable to the
-full IAM role ARN. Confirm the deploy job has `id-token: write`, the IAM OIDC
-provider uses audience `sts.amazonaws.com`, and the role trust policy allows
-the repository's `main` branch subject. See `08-github-actions-secrets.md`.
+Confirm both `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` are present as
+repository **Secrets** and are available to this workflow. The key must be
+active and belong to `GlownScanGitHubActions`. Do not print either value.
 
 The AWS region is fixed to `ap-southeast-2` in the workflow, so no
 `AWS_REGION` variable is needed.
 
+### `InvalidClientTokenId` or `SignatureDoesNotMatch`
+
+Check that the access key is active and that the secret key matches it. If the
+secret key was lost, create a replacement key in IAM and update the GitHub
+secret; AWS does not reveal an existing secret again.
+
 ### `AccessDenied` for SSM
 
-Check the IAM policy is attached to the GitHub OIDC deployment role, the
+Check `GlownScanGitHubSSMDeployPolicy` is attached to
+`GlownScanGitHubActions`, the
 account/region/instance ARN are correct, and the action/resource
 permissions match the actual workflow.
 
@@ -139,13 +150,13 @@ database connectivity.
 
 On EC2:
 
-``` bash
+```bash
 sudo docker ps --filter "name=glownscan-api"
 curl -i http://127.0.0.1:3000/health/database
 ```
 
 Expected container port mapping:
 
-``` text
+```text
 127.0.0.1:3000->3000/tcp
 ```
