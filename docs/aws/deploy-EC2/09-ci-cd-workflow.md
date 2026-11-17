@@ -68,7 +68,7 @@ script still needs to be decoded and validated correctly on the host.
 
 ## SSM command permissions
 
-The GitHub Actions IAM user needs permission to send
+The GitHub Actions OIDC role needs permission to send
 `AWS-RunShellScript` to the intended EC2 instance and read command
 status/output. See `07-iam-and-ssm.md`.
 
@@ -103,14 +103,20 @@ deploy workflow.
 
 ## Troubleshooting checklist
 
-### `Input required and not supplied: aws-region`
+### `Credentials could not be loaded` / `Could not load credentials from any providers`
 
-The workflow reads a missing variable. Create `AWS_REGION` under
-repository Variables or set `aws-region: ap-southeast-2` directly.
+The configure-credentials step must include `role-to-assume`; the workflow
+uses `${{ vars.AWS_DEPLOY_ROLE_ARN }}`. Set that repository variable to the
+full IAM role ARN. Confirm the deploy job has `id-token: write`, the IAM OIDC
+provider uses audience `sts.amazonaws.com`, and the role trust policy allows
+the repository's `main` branch subject. See `08-github-actions-secrets.md`.
+
+The AWS region is fixed to `ap-southeast-2` in the workflow, so no
+`AWS_REGION` variable is needed.
 
 ### `AccessDenied` for SSM
 
-Check the IAM policy is attached to `GlownScanGitHubActions`, the
+Check the IAM policy is attached to the GitHub OIDC deployment role, the
 account/region/instance ARN are correct, and the action/resource
 permissions match the actual workflow.
 

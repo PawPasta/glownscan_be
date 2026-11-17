@@ -33,22 +33,27 @@ status - stdout and stderr from the command invocation
 
 Never expose credentials or environment values in logs.
 
-## Common failure: AWS region missing
+## Common failure: OIDC credentials could not be loaded
 
 Error:
 
 ``` text
-Input required and not supplied: aws-region
+Credentials could not be loaded, please check your action inputs:
+Could not load credentials from any providers
 ```
 
-Fix: ensure `AWS_REGION` exists under GitHub repository Variables if the
-workflow uses `${{ vars.AWS_REGION }}`, or specify `ap-southeast-2`
-directly in the workflow.
+Check that repository variable `AWS_DEPLOY_ROLE_ARN` contains the complete
+IAM role ARN and that `role-to-assume` is passed to
+`aws-actions/configure-aws-credentials@v4`. The deploy job must grant
+`id-token: write`. In IAM, verify the GitHub OIDC provider audience is
+`sts.amazonaws.com` and the role trust policy subject matches
+`repo:PawPasta/glownscan_be:ref:refs/heads/main`. The workflow sets region
+`ap-southeast-2` directly; it does not need an `AWS_REGION` variable.
 
 ## Common failure: SSM access denied
 
 -   Confirm `GlownScanGitHubSSMDeployPolicy` is attached to the GitHub
-    Actions IAM user.
+    Actions OIDC role.
 -   Confirm the region, account ID, instance ID, document ARN, and
     resource permissions.
 -   Confirm the EC2 instance is registered with SSM.
