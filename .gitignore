@@ -45,6 +45,10 @@ lerna-debug.log*
 .env.production.local
 .env.local
 
+# Firebase Admin SDK credentials (keep service-account keys out of Git).
+*firebase-adminsdk*.json
+*-service-account*.json
+
 # temp directory
 .temp
 .tmp
