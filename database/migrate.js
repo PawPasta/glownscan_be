@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import { Client } from 'pg';
 import { fileURLToPath } from 'node:url';
+import { seedDevelopmentAdmin } from './seed-development-admin.js';
 
 const migrationsDirectory = fileURLToPath(
   new URL('./migrations/', import.meta.url),
@@ -226,6 +227,9 @@ async function main() {
     if (mode === 'reset') {
       await resetApplicationSchemas(client);
       await runMigrations(client, 'up');
+      if (await seedDevelopmentAdmin(client)) {
+        console.log('Created the development-only admin account.');
+      }
     } else {
       await runMigrations(client, mode);
     }
