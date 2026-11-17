@@ -445,6 +445,20 @@ The webhook validates the raw-body signature and timestamp, then extracts the
 GlowScan payment code from `code`, `content`, or `description`. Never call it
 from browser code or expose the signing secret.
 
+### Live skin-analysis status (optional signed-in experience)
+
+If the website exposes an authenticated analysis UI, it may use the same
+Socket.IO namespace as Flutter: `/skin-analysis` on the API origin. Authenticate
+the handshake with `auth: { token: accessToken }` or a Bearer authorization
+header. The server derives the private user room from the validated token; there
+is no client-selected room or `userId` subscription parameter. Listen for
+`analysis.status` events shaped as
+`{ sessionId, status, errorCode, occurredAt }`. Events contain no result or
+image data. Treat them as hints, fetch the protected status endpoint for the
+authoritative response, and retain polling as reconnect/outage fallback. Public
+landing pages and payment flows do not need this socket. A reverse proxy must
+forward WebSocket `Upgrade`/`Connection` headers to the API.
+
 Important contract gap: `SePayWebhookDto` currently whitelists only `id`,
 `transferType`, `transferAmount`, `code`, `content`, and `description`, while
 the provider's full sample also contains fields such as `gateway`,

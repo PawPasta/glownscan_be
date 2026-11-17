@@ -306,6 +306,36 @@ Failed jobs have `status: "FAILED"`, a normalized `errorCode`, and normally a
 `null` result. History returns `{ "items": [<session>...], "total": 1 }`;
 each item follows the same entitlement-aware shape as status polling.
 
+For live updates, connect to Socket.IO namespace `/skin-analysis` on the API
+origin using the access token in the Socket.IO `auth` payload (preferred) or an
+`Authorization: Bearer <accessToken>` header:
+
+```javascript
+const socket = io(`${API_ORIGIN}/skin-analysis`, {
+  auth: { token: accessToken },
+});
+socket.on('analysis.status', (event) => {
+  // { sessionId, status, errorCode, occurredAt }
+});
+socket.on('analysis.ready', () => {
+  // Reconcile active sessions through the status/history APIs.
+});
+```
+
+The server validates the token and derives the user's private room from its
+verified identity; clients cannot select another user's room. Events contain no
+image, analysis result, or Premium data. Fetch
+`GET /skin-analysis/:sessionId` after an event and after reconnect for the
+authoritative, entitlement-filtered state. Keep polling as a fallback because
+transient Redis/WebSocket outages can drop live events.
+`status` is one of `QUEUED`, `RUNNING`, `SUCCEEDED`, or `FAILED` (a repeated
+worker attempt can emit `RUNNING`/`QUEUED` more than once). The reverse proxy
+must pass WebSocket `Upgrade`/`Connection` headers to the API.
+Connections are closed when the access token expires; reconnect with the
+rotated/current token. In a multi-instance deployment, keep Socket.IO polling
+requests sticky to one API instance, or configure clients and ingress for
+WebSocket-only transport.
+
 There are at most three Gemini processing attempts, one Gemini request per
 attempt, followed by up to three cleanup-only attempts if deletion/purge fails.
 Cleanup attempts do not call Gemini. Once cleanup succeeds, the backend deletes

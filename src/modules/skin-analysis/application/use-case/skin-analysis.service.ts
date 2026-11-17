@@ -41,6 +41,10 @@ import {
   ANALYSIS_FAILURE_NOTIFICATION_PORT,
   type AnalysisFailureNotificationPort,
 } from '../../../notification/application/ports/analysis-failure-notification.port.js';
+import {
+  ANALYSIS_STATUS_PUBLISHER_PORT,
+  type AnalysisStatusPublisherPort,
+} from '../ports/analysis-status-publisher.port.js';
 
 @Injectable()
 export class SkinAnalysisService {
@@ -59,6 +63,8 @@ export class SkinAnalysisService {
     private readonly outbox: AnalysisOutboxPort,
     @Inject(ANALYSIS_FAILURE_NOTIFICATION_PORT)
     private readonly failureNotification: AnalysisFailureNotificationPort,
+    @Inject(ANALYSIS_STATUS_PUBLISHER_PORT)
+    private readonly statusPublisher: AnalysisStatusPublisherPort,
   ) {}
 
   async createUploadIntent(
@@ -127,9 +133,11 @@ export class SkinAnalysisService {
         throw new Error('Analysis session could not be queued.');
       }
       reservation = null;
+      await this.publishStatus(userId, sessionId, 'QUEUED');
       return { sessionId, status: 'QUEUED' };
     } catch (error) {
       await this.sessions.failSession(sessionId, userId, errorCode(error));
+      await this.publishStatus(userId, sessionId, 'FAILED', errorCode(error));
       throw error;
     } finally {
       if (reservation) await this.quota.finalizeAnalysis(reservation.id, false);
@@ -144,6 +152,7 @@ export class SkinAnalysisService {
     const work = await this.outbox.findPublished(outboxId);
     if (!work) return;
     if (!(await this.sessions.markRunning(work.sessionId, work.userId))) return;
+    await this.publishStatus(work.userId, work.sessionId, 'RUNNING');
 
     if (attemptNumber > 3) {
       try {
@@ -158,6 +167,7 @@ export class SkinAnalysisService {
       } catch (cleanupError) {
         if (attemptNumber < maxAttempts) {
           await this.sessions.retrySession(work.sessionId, work.userId);
+          await this.publishStatus(work.userId, work.sessionId, 'QUEUED');
           throw cleanupError;
         }
         this.logger.error(
@@ -189,9 +199,11 @@ export class SkinAnalysisService {
       if (attemptNumber === 3)
         await this.outbox.markCleanupRequired(work.id, errorCode(error));
       await this.sessions.retrySession(work.sessionId, work.userId);
+      await this.publishStatus(work.userId, work.sessionId, 'QUEUED');
       throw error;
     }
     await this.quota.finalizeAnalysis(work.reservationId, true);
+    await this.publishStatus(work.userId, work.sessionId, 'SUCCEEDED');
   }
 
   private async cleanupFailedAnalysis(
@@ -204,6 +216,7 @@ export class SkinAnalysisService {
       work.userId,
       code,
     );
+    await this.publishStatus(work.userId, work.sessionId, 'FAILED', code);
     try {
       await this.failureNotification.notifyAnalysisFailed(
         work.userId,
@@ -287,6 +300,27 @@ export class SkinAnalysisService {
         premiumRequired: true,
       },
     };
+  }
+
+  private async publishStatus(
+    userId: Uuid,
+    sessionId: Uuid,
+    status: AnalysisSessionStatus,
+    errorCode: string | null = null,
+  ): Promise<void> {
+    try {
+      await this.statusPublisher.publish({
+        userId,
+        sessionId,
+        status,
+        errorCode,
+        occurredAt: new Date().toISOString(),
+      });
+    } catch {
+      this.logger.warn(
+        `Could not publish analysis status event for session ${sessionId}.`,
+      );
+    }
   }
 }
 
