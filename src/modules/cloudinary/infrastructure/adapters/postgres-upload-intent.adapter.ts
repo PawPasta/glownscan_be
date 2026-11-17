@@ -28,8 +28,8 @@ export class PostgresUploadIntentAdapter implements UploadIntentPort {
       await client.query(
         `INSERT INTO app_cloudinary.upload_intents
            (user_id, purpose, public_id, expires_at)
-         VALUES ($1, $2, $3, $4)`,
-        [userId, purpose, publicId, expiresAt],
+         VALUES ($1, $2, $3, $4::timestamptz)`,
+        [userId, purpose, publicId, expiresAt.toISOString()],
       );
       if (purpose === 'SKIN_ANALYSIS' && consentVersion) {
         await client.query(

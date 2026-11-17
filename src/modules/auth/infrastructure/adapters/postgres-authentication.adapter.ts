@@ -136,8 +136,8 @@ export class PostgresAuthenticationAdapter
       await client.query(
         `INSERT INTO app_auth.action_tokens
            (user_id, purpose, token_hash, expires_at)
-         VALUES ($1, 'VERIFY_EMAIL', $2, $3)`,
-        [userId, data.verificationTokenHash, data.tokenExpiresAt],
+         VALUES ($1, 'VERIFY_EMAIL', $2, $3::timestamptz)`,
+        [userId, data.verificationTokenHash, data.tokenExpiresAt.toISOString()],
       );
     });
   }
@@ -395,8 +395,8 @@ export class PostgresAuthenticationAdapter
       await client.query(
         `INSERT INTO app_auth.action_tokens
            (user_id, purpose, token_hash, expires_at)
-         VALUES ($1, 'VERIFY_EMAIL', $2, $3)`,
-        [userId, tokenHash, expiresAt],
+         VALUES ($1, 'VERIFY_EMAIL', $2, $3::timestamptz)`,
+        [userId, tokenHash, expiresAt.toISOString()],
       );
     });
   }
@@ -418,8 +418,8 @@ export class PostgresAuthenticationAdapter
       await client.query(
         `INSERT INTO app_auth.action_tokens
            (user_id, purpose, token_hash, expires_at)
-         VALUES ($1, $2, $3, $4)`,
-        [userId, purpose, tokenHash, expiresAt],
+         VALUES ($1, $2, $3, $4::timestamptz)`,
+        [userId, purpose, tokenHash, expiresAt.toISOString()],
       );
     });
   }
@@ -525,13 +525,13 @@ export class PostgresAuthenticationAdapter
       await client.query(
         `INSERT INTO app_auth.auth_sessions
            (token_family_id, user_id, device_id, idle_expires_at, absolute_expires_at, ip_address, user_agent)
-         VALUES ($1, $2, $3, LEAST($4, $5), $5, $6, $7)`,
+         VALUES ($1, $2, $3, LEAST($4::timestamptz, $5::timestamptz), $5::timestamptz, $6, $7)`,
         [
           data.familyId,
           data.userId,
           device.rows[0].id,
-          data.expiresAt,
-          data.absoluteExpiresAt,
+          data.expiresAt.toISOString(),
+          data.absoluteExpiresAt.toISOString(),
           data.ipAddress,
           data.userAgent,
         ],
@@ -539,13 +539,13 @@ export class PostgresAuthenticationAdapter
       await client.query(
         `INSERT INTO app_auth.refresh_tokens
            (user_id, device_id, token_hash, token_family_id, expires_at, ip_address, user_agent)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+         VALUES ($1, $2, $3, $4, $5::timestamptz, $6, $7)`,
         [
           data.userId,
           device.rows[0].id,
           data.tokenHash,
           data.familyId,
-          data.expiresAt,
+          data.expiresAt.toISOString(),
           data.ipAddress,
           data.userAgent,
         ],
@@ -707,11 +707,11 @@ export class PostgresAuthenticationAdapter
       const session = await client.query<{ idle_expires_at: Date }>(
         `UPDATE app_auth.auth_sessions
          SET last_refreshed_at = CURRENT_TIMESTAMP,
-             idle_expires_at = LEAST($2, absolute_expires_at)
+             idle_expires_at = LEAST($2::timestamptz, absolute_expires_at)
          WHERE token_family_id = $1 AND revoked_at IS NULL
            AND absolute_expires_at > CURRENT_TIMESTAMP
          RETURNING idle_expires_at`,
-        [current.token_family_id, expiresAt],
+        [current.token_family_id, expiresAt.toISOString()],
       );
       if (!session.rowCount) {
         await this.revokeTokenFamily(
@@ -725,12 +725,12 @@ export class PostgresAuthenticationAdapter
       await client.query(
         `INSERT INTO app_auth.refresh_tokens
            (id, user_id, device_id, token_hash, token_family_id, expires_at, ip_address, user_agent)
-         SELECT $1, user_id, device_id, $2, token_family_id, $3, ip_address, user_agent
+         SELECT $1, user_id, device_id, $2, token_family_id, $3::timestamptz, ip_address, user_agent
          FROM app_auth.refresh_tokens WHERE id = $4`,
         [
           replacementId,
           newTokenHash,
-          session.rows[0].idle_expires_at,
+          new Date(session.rows[0].idle_expires_at).toISOString(),
           current.id,
         ],
       );

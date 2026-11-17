@@ -24,12 +24,12 @@ export class RateLimitService {
     const result = await this.database.query<{ request_count: number }>(
       `INSERT INTO app_security.rate_limit_windows
          (scope, subject, window_started_at, request_count)
-       VALUES ($1, $2, $3, 1)
+       VALUES ($1, $2, $3::timestamptz, 1)
        ON CONFLICT (scope, subject, window_started_at) DO UPDATE
          SET request_count = app_security.rate_limit_windows.request_count + 1
          WHERE app_security.rate_limit_windows.request_count < $4
        RETURNING request_count`,
-      [scope, subject, windowStart, limit],
+      [scope, subject, windowStart.toISOString(), limit],
     );
     return { allowed: result.rowCount === 1, retryAfterSeconds };
   }
