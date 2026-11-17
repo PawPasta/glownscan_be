@@ -224,9 +224,9 @@ export class PaymentService {
 
   private mapPersistenceError(error: unknown): never {
     if (error instanceof Error && error.message === 'PAYMENT_ADMIN_UNAVAILABLE')
-      throw new ConflictException(
-        'Configured payment administrator is unavailable.',
-      );
+      throw new Error('Configured payment administrator is unavailable.', {
+        cause: error,
+      });
     if (
       error instanceof Error &&
       error.message === 'WALLET_INSUFFICIENT_BALANCE'
