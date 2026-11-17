@@ -25,6 +25,9 @@ import { AnalysisOutboxDispatcher } from './infrastructure/workers/analysis-outb
 import { AnalysisWorker } from './infrastructure/workers/analysis-worker.service.js';
 import { NotificationModule } from '../notification/notification.module.js';
 import { PaymentModule } from '../payment/payment.module.js';
+import { ANALYSIS_STATUS_PUBLISHER_PORT } from './application/ports/analysis-status-publisher.port.js';
+import { RedisAnalysisStatusPublisherAdapter } from './infrastructure/adapters/redis-analysis-status-publisher.adapter.js';
+import { AnalysisStatusGateway } from './presentation/analysis-status.gateway.js';
 
 @Module({
   imports: [
@@ -48,6 +51,12 @@ import { PaymentModule } from '../payment/payment.module.js';
     SkinAssessmentService,
     AnalysisOutboxDispatcher,
     AnalysisWorker,
+    RedisAnalysisStatusPublisherAdapter,
+    AnalysisStatusGateway,
+    {
+      provide: ANALYSIS_STATUS_PUBLISHER_PORT,
+      useExisting: RedisAnalysisStatusPublisherAdapter,
+    },
     {
       provide: GEMINI_GENERATIVE_MODEL_PORT,
       useExisting: GeminiGenerativeModelAdapter,

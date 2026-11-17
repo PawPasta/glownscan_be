@@ -1,4 +1,12 @@
 export function validateEnvironment(env: Record<string, unknown>) {
+  if (
+    env.GLOWNSCAN_ANALYSIS_WEBSOCKET_ENABLED !== undefined &&
+    (typeof env.GLOWNSCAN_ANALYSIS_WEBSOCKET_ENABLED !== 'string' ||
+      !['true', 'false'].includes(env.GLOWNSCAN_ANALYSIS_WEBSOCKET_ENABLED))
+  )
+    throw new Error(
+      'GLOWNSCAN_ANALYSIS_WEBSOCKET_ENABLED must be true or false.',
+    );
   const required = [
     'GLOWNSCAN_DATABASE_URL',
     'GLOWNSCAN_JWT_ACCESS_SECRET',

@@ -71,6 +71,7 @@ function createService(overrides: Record<string, unknown> = {}) {
     failureNotification: {
       notifyAnalysisFailed: vi.fn().mockResolvedValue(undefined),
     },
+    statusPublisher: { publish: vi.fn().mockResolvedValue(undefined) },
   };
   const dependencies = { ...defaults, ...overrides } as any;
   return {
@@ -83,6 +84,7 @@ function createService(overrides: Record<string, unknown> = {}) {
       dependencies.imageDownloader,
       dependencies.outbox,
       dependencies.failureNotification,
+      dependencies.statusPublisher,
     ),
   };
 }
@@ -171,6 +173,9 @@ describe('SkinAnalysisService', () => {
     expect(dependencies.gemini.generateContent).not.toHaveBeenCalled();
     expect(dependencies.imageDownloader.download).not.toHaveBeenCalled();
     expect(dependencies.quota.finalizeAnalysis).not.toHaveBeenCalled();
+    expect(dependencies.statusPublisher.publish).toHaveBeenCalledWith(
+      expect.objectContaining({ userId, sessionId: imageId, status: 'QUEUED' }),
+    );
   });
 
   it('returns the existing session for the same idempotency key without consuming an upload twice', async () => {
@@ -258,6 +263,20 @@ describe('SkinAnalysisService', () => {
     expect(dependencies.quota.finalizeAnalysis).toHaveBeenCalledWith(
       outboxId,
       true,
+    );
+    expect(dependencies.statusPublisher.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId,
+        sessionId: imageId,
+        status: 'RUNNING',
+      }),
+    );
+    expect(dependencies.statusPublisher.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId,
+        sessionId: imageId,
+        status: 'SUCCEEDED',
+      }),
     );
   });
 
