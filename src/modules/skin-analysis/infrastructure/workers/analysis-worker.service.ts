@@ -43,18 +43,51 @@ export class AnalysisWorker
       async (job) => {
         if (job.name !== PROCESS_ANALYSIS_JOB)
           throw new Error(`Unsupported analysis job: ${job.name}`);
+        this.logger.log(
+          JSON.stringify({
+            event: 'analysis_job_started',
+            jobId: job.id,
+            outboxId: job.data.outboxId,
+            attemptNumber: job.attemptsMade + 1,
+            maxAttempts: job.opts.attempts ?? 6,
+            queueName: job.queueName,
+          }),
+        );
         await this.analysis.processOutboxEvent(
           job.data.outboxId,
           job.attemptsMade + 1,
           job.opts.attempts ?? 6,
+        );
+        this.logger.log(
+          JSON.stringify({
+            event: 'analysis_job_completed',
+            jobId: job.id,
+            outboxId: job.data.outboxId,
+            attemptNumber: job.attemptsMade + 1,
+          }),
         );
       },
       { connection: this.connection, concurrency: this.concurrency },
     );
     this.worker.on('failed', (job, error) => {
       this.logger.error(
-        `Analysis job ${job?.id ?? 'unknown'} failed.`,
-        error.stack,
+        JSON.stringify({
+          event: 'analysis_job_failed',
+          jobId: job?.id ?? 'unknown',
+          outboxId: job?.data.outboxId,
+          attemptNumber: job ? job.attemptsMade : undefined,
+          maxAttempts: job?.opts.attempts ?? 6,
+          willRetry: Boolean(
+            job && job.attemptsMade < (job.opts.attempts ?? 6),
+          ),
+          errorName: error.name,
+          errorCode:
+            'code' in error && typeof error.code === 'string'
+              ? error.code
+              : undefined,
+          errorMessage: error.message,
+          stack: error.stack,
+        }),
       );
     });
     this.logger.log('Skin-analysis background worker is ready.');
