@@ -68,7 +68,10 @@ describe('GeminiGenerativeModelAdapter', () => {
   });
 
   it('fails explicitly when the API key is missing', async () => {
-    const adapter = new GeminiGenerativeModelAdapter(new ConfigService({}));
+    const config = {
+      get: vi.fn().mockReturnValue(undefined),
+    } as unknown as ConfigService;
+    const adapter = new GeminiGenerativeModelAdapter(config);
 
     await expect(
       adapter.generateContent({
