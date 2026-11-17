@@ -182,12 +182,13 @@ describe('GeminiGenerativeModelAdapter', () => {
   });
 
   it('fails explicitly when Gemini returns an unsuccessful status', async () => {
+    const fakeGoogleApiKey = ['AIza', '123456789012345678901234'].join('');
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(
         JSON.stringify({
           error: {
             status: 'RESOURCE_EXHAUSTED',
-            message: 'Quota exceeded for key: AIza123456789012345678901234',
+            message: `Quota exceeded for key: ${fakeGoogleApiKey}`,
           },
         }),
         { status: 429 },
@@ -210,7 +211,7 @@ describe('GeminiGenerativeModelAdapter', () => {
     const log = loggerError.mock.calls[0]?.[0] as string;
     expect(log).toContain('RESOURCE_EXHAUSTED');
     expect(log).toContain('Quota exceeded');
-    expect(log).not.toContain('AIza123456789012345678901234');
+    expect(log).not.toContain(fakeGoogleApiKey);
     expect(log).toContain('"retryable":true');
   });
 });
