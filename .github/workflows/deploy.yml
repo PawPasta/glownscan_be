@@ -38,6 +38,11 @@ jobs:
       GLOWNSCAN_CLOUDINARY_API_KEY: ci-key
       GLOWNSCAN_CLOUDINARY_API_SECRET: ci-secret
       GLOWNSCAN_GEMINI_API_KEY: ci-gemini-key
+      GLOWNSCAN_REDIS_URL: redis://localhost:6379
+      GLOWNSCAN_SEPAY_WEBHOOK_SECRET: ci-only-sepay-webhook-secret
+      GLOWNSCAN_SEPAY_BANK_ACCOUNT_NUMBER: "0000000000"
+      GLOWNSCAN_BANK_ACCOUNT_NAME: CI TEST
+      GLOWNSCAN_BANK_BIN: "970423"
     services:
       postgres:
         image: postgres:16-alpine
@@ -49,6 +54,15 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd "pg_isready -U postgres -d glownscan_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
