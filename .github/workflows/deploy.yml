@@ -290,6 +290,11 @@ jobs:
 
           cd /opt/glownscan
 
+          if [ ! -r /opt/glownscan/firebase-adminsdk.json ]; then
+            echo "Firebase Admin service-account file is missing or unreadable."
+            exit 1
+          fi
+
           docker network inspect "$DOCKER_NETWORK" >/dev/null 2>&1 || \
             docker network create "$DOCKER_NETWORK"
           docker volume create glownscan-redis-data >/dev/null
@@ -347,6 +352,7 @@ jobs:
                 --restart unless-stopped \
                 --network "$DOCKER_NETWORK" \
                 --env-file /opt/glownscan/.env \
+                --mount type=bind,src=/opt/glownscan/firebase-adminsdk.json,dst=/app/firebase-adminsdk.json,readonly \
                 -p 127.0.0.1:3000:3000 \
                 "$PREVIOUS_IMAGE"
             else
@@ -362,6 +368,7 @@ jobs:
             --restart unless-stopped \
             --network "$DOCKER_NETWORK" \
             --env-file /opt/glownscan/.env \
+            --mount type=bind,src=/opt/glownscan/firebase-adminsdk.json,dst=/app/firebase-adminsdk.json,readonly \
             -p 127.0.0.1:3000:3000 \
             "$NEW_IMAGE"; then
             docker logs --tail 100 glownscan-api 2>/dev/null || true

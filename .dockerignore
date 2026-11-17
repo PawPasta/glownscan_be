@@ -10,4 +10,6 @@ docs
 !.env.example
 *.pem
 *.key
+*firebase-adminsdk*.json
+*-service-account*.json
 .codex

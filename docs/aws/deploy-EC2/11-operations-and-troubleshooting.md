@@ -4,7 +4,7 @@
 
 Connect to EC2 or use the approved SSM session/command path.
 
-``` bash
+```bash
 sudo docker ps --filter "name=glownscan-api"
 sudo docker ps --filter "name=glownscan-redis"
 sudo docker logs --tail 200 glownscan-api
@@ -24,7 +24,7 @@ publish port 6379 or remove that volume during ordinary deployments.
 
 ## Check Nginx, if configured
 
-``` bash
+```bash
 sudo nginx -t
 sudo systemctl status nginx --no-pager
 sudo journalctl -u nginx --since "30 minutes ago" --no-pager
@@ -45,7 +45,7 @@ Never expose credentials or environment values in logs.
 
 Error:
 
-``` text
+```text
 Credentials could not be loaded, please check your action inputs:
 Could not load credentials from any providers
 ```
@@ -63,39 +63,39 @@ the secret was lost, create a replacement key in IAM.
 
 ## Common failure: SSM access denied
 
--   Confirm `GlownScanGitHubSSMDeployPolicy` is attached to IAM user
-    `GlownScanGitHubActions` and grants only the SSM actions/resources the
-    workflow needs.
--   Confirm the region, account ID, instance ID, document ARN, and
-    resource permissions.
--   Confirm the EC2 instance is registered with SSM.
--   Review the exact denied action in the workflow logs.
+- Confirm `GlownScanGitHubSSMDeployPolicy` is attached to IAM user
+  `GlownScanGitHubActions` and grants only the SSM actions/resources the
+  workflow needs.
+- Confirm the region, account ID, instance ID, document ARN, and
+  resource permissions.
+- Confirm the EC2 instance is registered with SSM.
+- Review the exact denied action in the workflow logs.
 
 ## Common failure: SSM instance not found or offline
 
--   Check the region.
--   Check `EC2_INSTANCE_ID`.
--   Check the EC2 role and `AmazonSSMManagedInstanceCore`.
--   Check SSM Agent status and outbound network connectivity.
+- Check the region.
+- Check `EC2_INSTANCE_ID`.
+- Check the EC2 role and `AmazonSSMManagedInstanceCore`.
+- Check SSM Agent status and outbound network connectivity.
 
 ## Common failure: GHCR pull denied
 
--   Confirm the image name and commit tag.
--   Confirm the package visibility and read permission.
--   Confirm the correct Docker user has registry authentication.
--   Do not print the token to debug the issue.
+- Confirm the image name and commit tag.
+- Confirm the package visibility and read permission.
+- Confirm the correct Docker user has registry authentication.
+- Do not print the token to debug the issue.
 
 ## Common failure: env-file permission denied
 
 Error:
 
-``` text
+```text
 docker: --env-file: open /opt/glownscan/.env: permission denied
 ```
 
 For the documented deployment model:
 
-``` bash
+```bash
 sudo chown ubuntu:ubuntu /opt/glownscan/.env
 sudo chmod 600 /opt/glownscan/.env
 ```
@@ -108,7 +108,7 @@ authentication model accordingly.
 
 Inspect current containers and listeners before stopping anything:
 
-``` bash
+```bash
 sudo docker ps
 sudo ss -ltnp
 ```
@@ -117,7 +117,7 @@ Do not stop unrelated services without identifying them.
 
 ## Common failure: database health check fails
 
-``` bash
+```bash
 sudo docker logs --tail 200 glownscan-api
 ```
 
@@ -149,3 +149,12 @@ exposed: 1. Revoke or rotate it. 2. Update the secure secret store. 3.
 Confirm deployment still works. 4. Review CloudTrail and GitHub Actions
 logs. 5. Remove the exposed value from repository history where
 applicable.
+
+## Common failure: Firebase Admin reports invalid credentials
+
+Confirm `/opt/glownscan/firebase-adminsdk.json` exists on EC2 and belongs
+to the project configured by `GLOWNSCAN_FIREBASE_PROJECT_ID`. The deploy
+workflow mounts it read-only at `/app/firebase-adminsdk.json`, and
+`/opt/glownscan/.env` must set
+`GOOGLE_APPLICATION_CREDENTIALS=/app/firebase-adminsdk.json`. Never print
+the JSON file or its private key in logs.
