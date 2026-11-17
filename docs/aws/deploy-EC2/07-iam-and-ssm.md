@@ -10,7 +10,7 @@ EC2. This avoids needing GitHub-hosted runners to connect to SSH port
 
 -   Region: `ap-southeast-2`
 -   EC2 instance: `i-009ee9f9e537e232b`
--   IAM user for GitHub Actions: `GlownScanGitHubActions`
+-   GitHub Actions OIDC deployment role: verify the configured role ARN in GitHub repository variables.
 -   Custom IAM policy: `GlownScanGitHubSSMDeployPolicy`
 -   EC2 role documented during setup: `GlownScanEC2SSMRole`
 -   EC2 managed policy: `AmazonSSMManagedInstanceCore`
@@ -46,7 +46,7 @@ it in the Systems Manager Console:
 If it is not Online, check the EC2 role, agent status, network egress,
 and Systems Manager registration.
 
-## C. GitHub Actions IAM user
+## C. GitHub Actions OIDC role
 
 GitHub Actions authenticates with GitHub OIDC and an IAM role; it does not use
 long-lived AWS access keys. Create an IAM OIDC provider for
@@ -101,23 +101,16 @@ narrowly rather than granting broad `ssm:*`.
 2.  Open `GlownScanGitHubSSMDeployPolicy`.
 3.  Edit the JSON policy.
 4.  Review the policy and save the new version as default.
-5.  Open IAM → Users → `GlownScanGitHubActions` → Permissions.
-6.  Confirm the policy is attached to that user.
+5.  Open IAM → Roles and select the GitHub OIDC deployment role.
+6.  Confirm the policy is attached to that role.
 
 Saving a policy does not automatically attach it to an identity.
 
-## E. Create access keys
+## E. Configure GitHub repository variables
 
-1.  Open IAM → Users → `GlownScanGitHubActions`.
-2.  Open **Security credentials**.
-3.  Under **Access keys**, create a key only if one does not already
-    exist.
-4.  Copy the secret access key once and save it securely into GitHub
-    Secrets.
-5.  Never commit or share the key.
-
-Do not create extra keys unnecessarily. Disable and remove old keys
-after confirming the replacement works.
+Set `AWS_DEPLOY_ROLE_ARN` under **Settings → Secrets and variables → Actions
+→ Variables**. The workflow uses the fixed region `ap-southeast-2` and needs
+no long-lived AWS access keys.
 
 ## F. Test SSM access
 
@@ -137,9 +130,9 @@ Expected: account `877886324433` and a managed-node row with
 
 ## Security notes
 
--   Do not use `AdministratorAccess` for the GitHub Actions identity.
+-   Do not use `AdministratorAccess` for the GitHub Actions role.
 -   Restrict SSM `SendCommand` to the intended document and instance
     wherever supported.
--   Keep EC2 instance role and GitHub Actions IAM user separate; they
+-   Keep EC2 instance role and GitHub Actions OIDC role separate; they
     serve different purposes.
--   Review CloudTrail and IAM access-key activity periodically.
+-   Review CloudTrail role-assumption activity periodically.
