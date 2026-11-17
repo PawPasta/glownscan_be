@@ -285,8 +285,43 @@ jobs:
           IMAGE="__IMAGE__"
           IMAGE_TAG="__IMAGE_TAG__"
           NEW_IMAGE="$IMAGE:$IMAGE_TAG"
+          DOCKER_NETWORK="glownscan-net"
+          REDIS_CONTAINER="glownscan-redis"
 
           cd /opt/glownscan
+
+          docker network inspect "$DOCKER_NETWORK" >/dev/null 2>&1 || \
+            docker network create "$DOCKER_NETWORK"
+          docker volume create glownscan-redis-data >/dev/null
+
+          if ! docker container inspect "$REDIS_CONTAINER" >/dev/null 2>&1; then
+            docker run -d \
+              --name "$REDIS_CONTAINER" \
+              --network "$DOCKER_NETWORK" \
+              --network-alias redis \
+              --restart unless-stopped \
+              --mount source=glownscan-redis-data,target=/data \
+              redis:7-alpine redis-server --appendonly yes
+          else
+            docker network connect --alias redis "$DOCKER_NETWORK" "$REDIS_CONTAINER" 2>/dev/null || true
+            docker start "$REDIS_CONTAINER" >/dev/null 2>&1 || true
+          fi
+
+          REDIS_READY=0
+          REDIS_ATTEMPT=0
+          while [ "$REDIS_ATTEMPT" -lt 30 ]; do
+            if docker exec "$REDIS_CONTAINER" redis-cli ping 2>/dev/null | grep -q PONG; then
+              REDIS_READY=1
+              break
+            fi
+            REDIS_ATTEMPT=$((REDIS_ATTEMPT + 1))
+            sleep 2
+          done
+          if [ "$REDIS_READY" -ne 1 ]; then
+            echo "Redis did not become ready."
+            docker logs --tail 100 "$REDIS_CONTAINER" 2>/dev/null || true
+            exit 1
+          fi
 
           PREVIOUS_IMAGE=""
           if docker container inspect glownscan-api >/dev/null 2>&1; then
@@ -310,6 +345,7 @@ jobs:
               docker run -d \
                 --name glownscan-api \
                 --restart unless-stopped \
+                --network "$DOCKER_NETWORK" \
                 --env-file /opt/glownscan/.env \
                 -p 127.0.0.1:3000:3000 \
                 "$PREVIOUS_IMAGE"
@@ -324,6 +360,7 @@ jobs:
           if ! docker run -d \
             --name glownscan-api \
             --restart unless-stopped \
+            --network "$DOCKER_NETWORK" \
             --env-file /opt/glownscan/.env \
             -p 127.0.0.1:3000:3000 \
             "$NEW_IMAGE"; then

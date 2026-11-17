@@ -68,11 +68,14 @@ The current deployment script does the following:
 2. Pulls the exact image tag.
 3. Records the currently deployed image for rollback.
 4. Runs forward-only database migrations.
-5. Stops/removes `glownscan-api` and starts the new container with
-   `--env-file /opt/glownscan/.env`.
-6. Bind host port only to loopback, e.g. `127.0.0.1:3000:3000`.
-7. Checks `/health/database`.
-8. If startup or health validation fails, captures logs and attempts to
+5. Creates/reuses the `glownscan-net` Docker network and starts a persistent
+   Redis container with alias `redis` and a named data volume if needed. Redis
+   port 6379 is not published on the EC2 host.
+6. Stops/removes `glownscan-api` and starts the new container on that network
+   with `--env-file /opt/glownscan/.env`.
+7. Bind the host port only to loopback, e.g. `127.0.0.1:3000:3000`.
+8. Checks Redis readiness and `/health/database`.
+9. If startup or health validation fails, captures logs and attempts to
    restore the previous image.
 
 The script is transported as base64 through SSM and executes Docker commands

@@ -29,6 +29,7 @@ minimum, verify the database URL variable expected by the application:
 ``` dotenv
 GLOWNSCAN_DATABASE_URL=REPLACE_WITH_YOUR_DATABASE_CONNECTION_STRING
 GLOWNSCAN_FIREBASE_PROJECT_ID=REPLACE_WITH_YOUR_FIREBASE_PROJECT_ID
+GLOWNSCAN_REDIS_URL=redis://redis:6379
 ```
 
 These are placeholders, not working values. Use the real values from
@@ -38,6 +39,12 @@ account private key for this verification flow. Configure the SMTP and
 JWT values from `.env.example` as well. `DATABASE_URL` is a fallback in
 the documented code path, but prefer the variable the application
 explicitly expects.
+
+The deploy workflow creates a persistent `glownscan-redis` container on the
+Docker network `glownscan-net`, with the network alias `redis`. Keep this URL
+for the EC2 container deployment. Do not publish Redis port 6379 on the EC2
+host. For running NestJS directly on your development machine instead of in
+Docker, use `redis://127.0.0.1:6379` when Redis publishes that port locally.
 
 Never paste the real `.env` contents into chat, tickets, shell
 transcripts, or GitHub logs.

@@ -6,13 +6,21 @@ Connect to EC2 or use the approved SSM session/command path.
 
 ``` bash
 sudo docker ps --filter "name=glownscan-api"
+sudo docker ps --filter "name=glownscan-redis"
 sudo docker logs --tail 200 glownscan-api
+sudo docker exec glownscan-redis redis-cli ping
+sudo docker network inspect glownscan-net
 curl -i http://127.0.0.1:3000/health/database
 ```
 
 The container should be `Up` and bind `127.0.0.1:3000->3000/tcp`. The
 health endpoint should return the success response defined by the
 application.
+
+The API container must be connected to `glownscan-net`, and
+`GLOWNSCAN_REDIS_URL` in `/opt/glownscan/.env` must be `redis://redis:6379`.
+Redis data is stored in the `glownscan-redis-data` Docker volume. Do not
+publish port 6379 or remove that volume during ordinary deployments.
 
 ## Check Nginx, if configured
 
@@ -116,6 +124,15 @@ sudo docker logs --tail 200 glownscan-api
 Check the database URL variable name, credentials, database
 availability, TLS settings, and network access. Do not paste database
 connection strings into logs or tickets.
+
+## Common failure: Redis hostname cannot be resolved
+
+`getaddrinfo ENOTFOUND redis` means the API container cannot resolve the
+Redis network alias. Check that both containers are attached to
+`glownscan-net`, Redis is running, and the API environment uses
+`redis://redis:6379`. A NestJS process running directly on EC2 must use a
+host-reachable address instead; the Docker-only hostname `redis` does not
+resolve from the host network.
 
 ## Rollback principles
 
