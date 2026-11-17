@@ -31,3 +31,18 @@ Do not use `npm run db:migrate:reset` on a database with data to preserve. For
 an existing installation that cannot be reset, keep its migration history and
 prepare a separate forward-only compatibility migration instead of applying
 this baseline.
+
+In non-production environments, `npm run db:migrate:reset` seeds the
+development-only administrator from `database/seed-development-admin.js` after
+the schema is rebuilt. This seed is not part of the migration files and is not
+run by deployment migrations (`up`).
+
+## Temporal column and persistence conventions
+
+Persist instants (creation/update/expiry/acceptance/processing/payment times)
+as PostgreSQL `TIMESTAMPTZ`. Application adapters must serialize JavaScript
+`Date` values with `toISOString()` at the database boundary; use explicit
+`::timestamptz` casts for parameters inside expressions such as `LEAST`.
+Date-only business values remain PostgreSQL `DATE` (currently date of birth,
+daily quota date, and routine check-in date); do not turn these calendar dates
+into instants because doing so introduces timezone-dependent day shifts.

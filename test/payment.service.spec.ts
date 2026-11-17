@@ -1,4 +1,5 @@
 import { createHmac } from 'node:crypto';
+import { HttpException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import type { PaymentDataPort } from '../src/modules/payment/application/ports/payment-data.port.js';
 import type { PaymentGatewayPort } from '../src/modules/payment/application/ports/payment-gateway.port.js';
@@ -211,5 +212,25 @@ describe('PaymentService website contracts', () => {
       resourceId: 'order-1',
       metadata: { reason: 'Duplicate transfer' },
     });
+  });
+
+  it('treats a missing configured payment administrator as a server error', async () => {
+    const service = new PaymentService(
+      {
+        refundPaidOrder: vi
+          .fn()
+          .mockRejectedValue(new Error('PAYMENT_ADMIN_UNAVAILABLE')),
+      } as unknown as PaymentDataPort,
+      gateway(),
+      {} as never,
+      auditLog as never,
+    );
+
+    const result = service.refundOrder('order-1', 'Reason', 'admin-1');
+
+    await expect(result).rejects.not.toBeInstanceOf(HttpException);
+    await expect(result).rejects.toThrow(
+      'Configured payment administrator is unavailable.',
+    );
   });
 });

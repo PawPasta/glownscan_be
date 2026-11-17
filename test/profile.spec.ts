@@ -270,7 +270,7 @@ describe('PostgresUploadIntentAdapter', () => {
       expect.stringContaining(
         'INSERT INTO app_cloudinary.upload_intents\n           (user_id, purpose, public_id, expires_at)',
       ),
-      [userId, 'AVATAR', publicId, expiresAt],
+      [userId, 'AVATAR', publicId, expiresAt.toISOString()],
     );
     expect(
       query.mock.calls.some(([sql]) => String(sql).includes('secure_url')),

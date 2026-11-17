@@ -4,6 +4,44 @@ import { RefreshTokenAlreadyRotatedError } from '../src/modules/auth/application
 import { PostgresAuthenticationAdapter } from '../src/modules/auth/infrastructure/adapters/postgres-authentication.adapter.js';
 
 describe('PostgresAuthenticationAdapter refresh-family policy', () => {
+  it('persists session expiry instants as ISO strings with explicit timestamptz casts', async () => {
+    const query = vi
+      .fn()
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: 'device-id' }] })
+      .mockResolvedValue({ rowCount: 1, rows: [] });
+    const adapter = createAdapter(query);
+    const idleExpiresAt = new Date('2026-11-17T18:00:00.000Z');
+    const absoluteExpiresAt = new Date('2026-12-17T18:00:00.000Z');
+
+    await adapter.createRefreshSession({
+      userId: 'user-id',
+      deviceUuid: 'installation-id',
+      platform: 'WEBSITE',
+      familyId: 'family-id',
+      tokenHash: 'token-hash',
+      expiresAt: idleExpiresAt,
+      absoluteExpiresAt,
+      ipAddress: null,
+      userAgent: null,
+    });
+
+    expect(query.mock.calls[2]?.[0]).toContain(
+      'LEAST($4::timestamptz, $5::timestamptz)',
+    );
+    expect(query.mock.calls[2]?.[1]).toEqual([
+      'family-id',
+      'user-id',
+      'device-id',
+      idleExpiresAt.toISOString(),
+      absoluteExpiresAt.toISOString(),
+      null,
+      null,
+    ]);
+    expect(query.mock.calls[3]?.[0]).toContain('$5::timestamptz');
+    expect(query.mock.calls[3]?.[1]?.[4]).toBe(idleExpiresAt.toISOString());
+  });
+
   it('does not revoke a winning session for a duplicate refresh within the race window', async () => {
     const query = vi.fn().mockResolvedValueOnce({
       rows: [

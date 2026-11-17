@@ -596,8 +596,14 @@ export class PostgresPaymentDataAdapter implements PaymentDataPort {
     await client.query(
       `INSERT INTO app_billing.premium_subscriptions
          (user_id, payment_order_id, package_code, starts_at, expires_at)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [order.user_id, order.id, order.premium_package, startsAt, expiresAt],
+       VALUES ($1, $2, $3, $4::timestamptz, $5::timestamptz)`,
+      [
+        order.user_id,
+        order.id,
+        order.premium_package,
+        new Date(startsAt).toISOString(),
+        expiresAt.toISOString(),
+      ],
     );
     await client.query(
       `INSERT INTO app_skin_analysis.user_analysis_entitlements
