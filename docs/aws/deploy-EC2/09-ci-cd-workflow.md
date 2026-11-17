@@ -15,21 +15,18 @@ of truth.
 ## Intended pipeline
 
 1.  **CI:** lint, tests, and build on every workflow run.
-2.  **Detect deployable changes:** check whether a push to `main` changes
-    application or image inputs.
-3.  **Build and publish:** only when deployable inputs changed, build a
-    Docker image and push it to GHCR using the commit SHA as tag.
-4.  **Deploy:** only after an image is published, configure AWS
+2.  **Build and publish:** every push to `main` builds a Docker image and
+    pushes it to GHCR using the commit SHA as tag, including merges that only
+    change documentation or workflow configuration.
+3.  **Deploy:** only after an image is published, configure AWS
     credentials, send a command using SSM, and wait for command
     completion.
-5.  **Verify:** check deployment/health status and preserve logs on
+4.  **Verify:** check deployment/health status and preserve logs on
     failure.
 
-Changes limited to documentation, tests, or workflow files still run CI
-but do not build/push an image or deploy. The image job is triggered by
-changes to `Dockerfile`, `.npmrc`, `package.json`, `package-lock.json`,
-`nest-cli.json`, `tsconfig.json`, `tsconfig.build.json`, `src/`, or
-`database/`.
+Every push or merge commit on `main` runs CI, builds and publishes the image,
+then deploys that exact image to EC2. Pull requests targeting `main` run CI
+only; they do not deploy.
 
 The workflow should deploy only from `main` unless a deliberate release
 process says otherwise. A test workflow with `workflow_dispatch` can be
