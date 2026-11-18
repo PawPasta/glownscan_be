@@ -152,7 +152,7 @@ applicable.
 
 ## Common failure: Firebase Admin reports invalid credentials
 
-Confirm `/opt/glownscan/firebase-adminsdk.json` exists on EC2 and belongs
+Confirm `/opt/glownscan/firebase-service-account.json` exists on EC2 and belongs
 to the project configured by `GLOWNSCAN_FIREBASE_PROJECT_ID`. The deploy
 workflow mounts it read-only at `/app/firebase-adminsdk.json`, and
 `/opt/glownscan/.env` must set

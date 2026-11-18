@@ -36,7 +36,7 @@ GLOWNSCAN_REDIS_URL=redis://redis:6379
 These are placeholders, not working values. Use the real values from
 your secure configuration source. Firebase ID-token verification and FCM
 delivery require the Firebase Admin service-account JSON. Store it on EC2
-at `/opt/glownscan/firebase-adminsdk.json`; the deploy workflow mounts it
+at `/opt/glownscan/firebase-service-account.json`; the deploy workflow mounts it
 read-only at `/app/firebase-adminsdk.json`. Set
 `GOOGLE_APPLICATION_CREDENTIALS=/app/firebase-adminsdk.json` in this env
 file. Configure the SMTP and JWT values from `.env.example` as well.
@@ -62,8 +62,8 @@ this deployment model, keep the file owned by `ubuntu` with mode `600`:
 ```bash
 sudo chown ubuntu:ubuntu /opt/glownscan/.env
 sudo chmod 600 /opt/glownscan/.env
-sudo chown ubuntu:ubuntu /opt/glownscan/firebase-adminsdk.json
-sudo chmod 600 /opt/glownscan/firebase-adminsdk.json
+sudo chown ubuntu:ubuntu /opt/glownscan/firebase-service-account.json
+sudo chmod 600 /opt/glownscan/firebase-service-account.json
 ls -l /opt/glownscan/.env
 ```
 
