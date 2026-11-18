@@ -270,12 +270,20 @@ Create requires email and password; update fields are optional. `status` is
 | GET/POST         | `/admin/catalog/products/:productId/affiliate-links` | Implemented | List/create affiliate links.                 |
 | PATCH/DELETE     | `/admin/catalog/affiliate-links/:id`                 | Implemented | Update/remove affiliate link.                |
 | POST             | `/payment/admin/orders/:orderId/refund`              | Implemented | Issue an internal-wallet refund with reason. |
+| POST             | `/skin-analysis/admin/test-groq`                     | Implemented | Admin-only diagnostic using the configured AI provider. |
 
 Refund requires a reason in the request body:
 
 ```json
 { "reason": "Customer support case: duplicate transfer" }
 ```
+
+The Groq diagnostic endpoint accepts `{ "secureUrl": "https://..." }` and
+returns the selected `aiProvider`, provider name, model, timing, and validated
+analysis result. It is rate-limited and requires the `ADMIN` role. The legacy
+`/skin-analysis/admin/test-ai` and `/skin-analysis/admin/test-gemini` paths
+remain available for compatibility; all three paths use the provider selected
+by `GLOWNSCAN_ANALYSIS_AI_PROVIDER` (Groq by default).
 
 ### Admin response data
 
@@ -459,26 +467,15 @@ authoritative response, and retain polling as reconnect/outage fallback. Public
 landing pages and payment flows do not need this socket. A reverse proxy must
 forward WebSocket `Upgrade`/`Connection` headers to the API.
 
-Important contract gap: `SePayWebhookDto` currently whitelists only `id`,
-`transferType`, `transferAmount`, `code`, `content`, and `description`, while
-the provider's full sample also contains fields such as `gateway`,
-`transactionDate`, `accountNumber`, `subAccount`, `referenceCode`, and
-`accumulated`. Because the global validation pipe rejects unknown fields, the
-full provider payload may receive HTTP 400 before signature/business
-processing. The DTO must be aligned with SePay's configured webhook payload
-before relying on this sample in production. The minimal shape currently
-accepted by the DTO is:
-
-```json
-{
-  "id": 43842569,
-  "transferType": "in",
-  "transferAmount": 100000,
-  "code": "GS0123456789ABCDEF0123",
-  "content": "QR - GS0123456789ABCDEF0123",
-  "description": "BankAPINotify QR - GS0123456789ABCDEF0123"
-}
-```
+The DTO accepts the full listed provider payload. Database event records retain
+both queryable fields (`gateway`, `transaction_date`, `account_number`,
+`sub_account`, `provider_code`, `content`, `description`, `reference_code`,
+`transfer_type`, `amount_vnd`, and `accumulated_vnd`) and the complete request
+body in `raw_payload` JSONB. Signature and timestamp headers are used for
+authentication and are not stored. Duplicate event IDs are idempotently
+ignored. Valid but unmatched, missing-code, and outgoing transfers are stored
+with `processing_result: "IGNORED"`; only matching incoming payments update
+wallets/orders.
 
 ## Remaining website APIs / contracts
 

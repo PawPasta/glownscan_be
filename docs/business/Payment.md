@@ -7,6 +7,9 @@
 - SePay calls `POST /payment/webhook`. The backend authenticates the signed
   timestamp/body, matches the transfer to a pending order, and deduplicates the
   provider transaction ID.
+- The complete signed SePay JSON body is retained for reconciliation, alongside
+  indexed/queryable provider fields. Outgoing and unmatched transfers are
+  recorded as ignored events and do not mutate wallet or order balances.
 - A verified top-up credits the user's wallet. A verified package checkout
   credits the top-up, debits the package price, credits the administrator's
   wallet ledger, and creates or extends the user's single `PREMIUM` entitlement
