@@ -70,7 +70,7 @@ rollback() {
       --restart unless-stopped \
       --network "$DOCKER_NETWORK" \
       --env-file /opt/glownscan/.env \
-      --mount type=bind,src=/opt/glownscan/firebase-service-account.json,dst=/app/firebase-adminsdk.json,readonly \
+      --mount type=bind,src=/opt/glownscan/firebase-service-account.json,dst=/app/secrets/firebase-service-account.json,readonly \
       -p 127.0.0.1:3000:3000 \
       "$PREVIOUS_IMAGE"
   else
@@ -86,7 +86,7 @@ if ! docker run -d \
   --restart unless-stopped \
   --network "$DOCKER_NETWORK" \
   --env-file /opt/glownscan/.env \
-  --mount type=bind,src=/opt/glownscan/firebase-service-account.json,dst=/app/firebase-adminsdk.json,readonly \
+  --mount type=bind,src=/opt/glownscan/firebase-service-account.json,dst=/app/secrets/firebase-service-account.json,readonly \
   -p 127.0.0.1:3000:3000 \
   "$NEW_IMAGE"; then
   docker logs --tail 100 glownscan-api 2>/dev/null || true
