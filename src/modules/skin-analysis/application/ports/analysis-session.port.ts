@@ -1,4 +1,5 @@
 import type { Uuid } from '../../../../shared/types/domain.types.js';
+import type { AnalysisProvider } from '../../domain/entities/enums/skin-analysis.enums.js';
 import type { SkinAnalysisResult } from '../types/skin-analysis-result.js';
 
 export type AnalysisSessionStatus =
@@ -30,6 +31,7 @@ export interface AnalysisSessionPort {
     userId: Uuid,
     key: string,
     fingerprint: string,
+    provider: AnalysisProvider,
   ): Promise<{ id: Uuid; created: boolean; fingerprint: string }>;
   queueSession(
     sessionId: Uuid,

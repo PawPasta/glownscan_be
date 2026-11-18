@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { UnprocessableEntityException } from '../../../../shared/handler/http.exceptions.js';
-import type { GeminiImageInput } from '../../application/ports/gemini-generative-model.port.js';
+import type { AnalysisImageInput } from '../../application/ports/generative-model.port.js';
 import type { ImageDownloaderPort } from '../../application/ports/image-downloader.port.js';
 
 const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -25,7 +25,7 @@ export class CloudinaryImageDownloader implements ImageDownloaderPort {
     );
   }
 
-  async download(secureUrl: string): Promise<GeminiImageInput> {
+  async download(secureUrl: string): Promise<AnalysisImageInput> {
     const response = await fetch(secureUrl, {
       method: 'GET',
       redirect: 'error',

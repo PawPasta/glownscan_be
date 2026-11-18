@@ -13,7 +13,7 @@ each module's schema together and place seed data immediately after its schema.
 | V005    | Cloudinary upload intents   | Upload intents belong to auth users.                                        |
 | V006    | Catalog                     | Product, ingredient, concern, and affiliate-link schema.                    |
 | V007    | Catalog demo data           | Seeds demo rows after catalog tables exist.                                 |
-| V008    | Skin analysis               | Creates analysis sessions, results, images, consent, and outbox.            |
+| V008    | Skin analysis               | Creates analysis sessions, results, images, consent, and outbox; defaults provider to Groq. |
 | V009    | Skin assessment             | Adds current assessments and uses the analysis schema's update trigger.     |
 | V010    | Skin analysis quotas        | Depends on the analysis schema and stores plan/usage/reservations.          |
 | V011    | Wallet and Premium payments | Uses auth users and analysis entitlements.                          |
@@ -21,6 +21,7 @@ each module's schema together and place seed data immediately after its schema.
 | V013    | Routines and notifications  | Routines may reference analysis sessions; preferences/inbox reference auth. |
 | V014    | Skin-analysis consent       | Persists acceptance against a Cloudinary upload intent before image upload. |
 | V015    | Package permissions         | Adds role capabilities and maps active Premium packages to feature permissions. |
+| V016    | SePay webhook payload       | Stores provider fields and complete JSON events for reconciliation.             |
 
 `database/migrate.js` applies files in numeric order and records each file's
 version, name, and checksum. This baseline was renumbered for a clean schema
@@ -36,6 +37,11 @@ In non-production environments, `npm run db:migrate:reset` seeds the
 development-only administrator from `database/seed-development-admin.js` after
 the schema is rebuilt. This seed is not part of the migration files and is not
 run by deployment migrations (`up`).
+
+V016 is a forward-only compatibility migration for installations that have
+already applied the earlier schema. It extends SePay event records while
+preserving existing events and payment history. The Groq provider is part of
+the resettable V008 skin-analysis schema.
 
 ## Temporal column and persistence conventions
 

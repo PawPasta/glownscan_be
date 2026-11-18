@@ -85,6 +85,7 @@ export class SePayWebhookDto {
 
   @IsString()
   @IsNotEmpty()
+  @MaxLength(20)
   transferType!: string;
 
   @IsInt()
@@ -93,13 +94,46 @@ export class SePayWebhookDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(100)
+  gateway?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  transactionDate?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  accountNumber?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  subAccount?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
   code?: string | null;
 
   @IsOptional()
   @IsString()
+  @MaxLength(2000)
   content?: string | null;
 
   @IsOptional()
   @IsString()
+  @MaxLength(2000)
   description?: string | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  accumulated?: number | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(150)
+  referenceCode?: string | null;
 }

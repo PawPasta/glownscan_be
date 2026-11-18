@@ -8,8 +8,9 @@ instrument measurement.
 
 ## Primary workflow
 
-1. The client explains facial-image processing by Cloudinary and Gemini and
-   obtains consent before upload. It sends `{ "consentAccepted": true }` to
+1. The client calls `GET /skin-analysis/consent-info`, displays its disclosure
+   for Cloudinary and the active AI provider (Groq by default), and obtains
+   consent before upload. It sends `{ "consentAccepted": true }` to
    `POST /skin-analysis/upload-intent`; the server stores the consent version
    against that user-bound intent before issuing a signature.
 2. The client uploads the image directly to Cloudinary.
@@ -23,20 +24,21 @@ instrument measurement.
 6. The outbox dispatcher publishes the event to BullMQ. A Redis outage leaves
    the durable event pending for a later dispatcher pass.
 7. The worker atomically changes the owned session from `QUEUED` to `RUNNING`,
-   downloads the verified Cloudinary image, then invokes Gemini.
+   downloads the verified Cloudinary image, then invokes the configured AI
+   provider.
 8. The worker validates the response and transactionally persists the result
    and observations before changing the session to `SUCCEEDED`.
-9. A failed worker attempt returns the session to `QUEUED`; BullMQ performs at
-   three total processing attempts, with one Gemini request per attempt. After
-   the third failure, up to three additional queue attempts are reserved only
-   for cleanup; they never call Gemini again. Once cleanup succeeds, the worker
+9. A failed worker attempt returns the session to `QUEUED`; BullMQ performs
+   three total processing attempts, with one AI-provider request per attempt.
+   After the third failure, up to three additional queue attempts are reserved
+   only for cleanup; they never call the AI provider again. Once cleanup succeeds, the worker
    deletes the Cloudinary image, purges analysis outputs and the outbox URL,
    retains a minimal `FAILED` session record, then sends inbox, email, and FCM
    notifications asking for a new image.
 
 The app polls `GET /skin-analysis/:sessionId` until the session is terminal.
 BullMQ may deliver a job more than once, so only the worker that atomically
-claims `QUEUED` may call Gemini; a duplicate delivery exits without a provider
+claims `QUEUED` may call the configured AI provider; a duplicate delivery exits without a provider
 call. A `RUNNING` lease older than the configured reclaim period may be claimed
 again after a worker crash.
 
@@ -65,7 +67,7 @@ The structured result includes:
   image.
 - Limitations of the estimate.
 
-If Gemini returns a structurally valid result with `quality.accepted` set to
+If the configured AI provider returns a structurally valid result with `quality.accepted` set to
 `false`, the worker still persists that result. The quality flag and issue
 codes are part of the session result for the client to interpret.
 
@@ -74,19 +76,20 @@ codes are part of the session result for the client to interpret.
 - Cloudinary metadata must prove the image was uploaded for this user under a
   valid skin-analysis intent. The backend does not analyze an arbitrary URL
   supplied by the client.
-- The upload intent is consumed before downloading the image and calling
-  Gemini. If download, analysis, or result validation fails, the same intent
+- The upload intent is consumed before downloading the image and calling the
+  configured AI provider. If download, analysis, or result validation fails, the same intent
   cannot be reused; the client must create another intent and upload again.
-- The prompt directs Gemini to assess visible appearance only, avoid
+- The prompt directs the configured model to assess visible appearance only, avoid
   identifying the person or inferring protected/personal characteristics, and
   avoid medical claims. Scores are estimates based on a single image.
 - Consent is required before a signed upload intent is issued and is stored
   with the upload intent and analysis session. The version records which notice
   the client should display; the backend cannot prove what text the client
-  showed. The versioned notice must explicitly name Cloudinary and Gemini.
-  Version `skin-analysis-consent-v1` should be presented with a clear statement
-  that the facial image is uploaded to Cloudinary and shared with Google Gemini
-  for a cosmetic visual estimate, not a medical diagnosis.
+  showed. Consent version `skin-analysis-consent-v3` identifies the active
+  provider returned by the upload-intent endpoint. The notice must say the
+  facial image is uploaded to Cloudinary and shared with that provider for a
+  cosmetic visual estimate, not a medical diagnosis. Groq is the default;
+  OpenAI and Gemini can be selected with server configuration.
 - The worker stores session state, validated result, and observations. It does
   not log image bytes, image URLs, or raw provider responses.
 - The upload intent remains in `app_cloudinary.upload_intents`; Cloudinary owns
@@ -118,7 +121,7 @@ sequenceDiagram
     participant Cloud as "Cloudinary"
     participant Redis as "Redis and BullMQ"
     participant Worker as "Analysis Worker"
-    participant Gemini as "Gemini"
+    participant AI as "Configured AI Provider"
     participant Notify as "Notification Service"
 
     User->>App: Give consent and choose a facial image
@@ -142,10 +145,10 @@ sequenceDiagram
         Worker->>DB: Atomically claim queued session
         Worker->>Cloud: Download the verified image
         Cloud-->>Worker: Return image bytes
-        Worker->>Gemini: Analyze image with the visual assessment prompt
-        Gemini-->>Worker: Return structured result
+        Worker->>AI: Analyze image with the visual assessment prompt
+        AI-->>Worker: Return structured result
         Worker->>DB: Validate and persist terminal result
-        alt All three Gemini processing attempts fail
+        alt All three AI-provider processing attempts fail
             Worker->>Cloud: Delete uploaded facial image
             Worker->>DB: Purge analysis payload and scrub queued URL
             Worker->>DB: Keep minimal FAILED session tombstone

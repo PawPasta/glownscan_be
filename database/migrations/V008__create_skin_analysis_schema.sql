@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS app_skin_analysis.analysis_sessions (
     user_id UUID NOT NULL REFERENCES app_auth.users(id) ON DELETE CASCADE,
     status VARCHAR(30) NOT NULL DEFAULT 'UPLOAD_PENDING',
     analysis_kind VARCHAR(30) NOT NULL,
-    provider VARCHAR(30) NOT NULL DEFAULT 'GEMINI',
+    provider VARCHAR(30) NOT NULL DEFAULT 'GROQ',
     provider_task_id VARCHAR(255),
     model_version VARCHAR(150),
     prompt_version VARCHAR(100),
@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS app_skin_analysis.analysis_sessions (
         'UPLOAD_PENDING', 'QUEUED', 'RUNNING', 'SUCCEEDED', 'FAILED', 'REJECTED'
     )),
     CONSTRAINT ck_analysis_sessions_kind CHECK (analysis_kind IN ('INITIAL', 'FOLLOW_UP')),
-    CONSTRAINT ck_analysis_sessions_provider CHECK (provider IN ('GEMINI', 'YOUCAM', 'HAUT_AI')),
+    CONSTRAINT ck_analysis_sessions_provider CHECK (provider IN ('GROQ', 'OPENAI', 'GEMINI', 'YOUCAM', 'HAUT_AI')),
     CONSTRAINT ck_analysis_sessions_attempt_count CHECK (attempt_count >= 0),
     CONSTRAINT ck_analysis_sessions_terminal_time CHECK (
         completed_at IS NULL OR status IN ('SUCCEEDED', 'FAILED', 'REJECTED')

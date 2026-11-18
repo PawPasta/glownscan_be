@@ -6,11 +6,12 @@ import {
   type CloudinaryUploadConfirmation,
 } from '../../../cloudinary/application/use-case/cloudinary-upload-intent.service.js';
 import {
-  GEMINI_GENERATIVE_MODEL_PORT,
-  type GeminiGenerativeModelPort,
-} from '../ports/gemini-generative-model.port.js';
+  GENERATIVE_MODEL_PORT,
+  type GenerativeModelPort,
+} from '../ports/generative-model.port.js';
 import { SKIN_ANALYSIS_PROMPT } from '../prompts/skin-analysis.prompt.js';
 import type { SkinAnalysisResult } from '../types/skin-analysis-result.js';
+import { AnalysisProvider } from '../../domain/entities/enums/skin-analysis.enums.js';
 import { parseSkinAnalysisResult as validateSkinAnalysisResult } from '../validators/skin-analysis-result.validator.js';
 import {
   ANALYSIS_QUOTA_PORT,
@@ -48,11 +49,11 @@ import {
 
 @Injectable()
 export class SkinAnalysisService {
-  private static readonly CONSENT_VERSION = 'skin-analysis-consent-v1';
+  private static readonly CONSENT_VERSION = 'skin-analysis-consent-v3';
   private readonly logger = new Logger(SkinAnalysisService.name);
   constructor(
-    @Inject(GEMINI_GENERATIVE_MODEL_PORT)
-    private readonly gemini: GeminiGenerativeModelPort,
+    @Inject(GENERATIVE_MODEL_PORT)
+    private readonly generativeModel: GenerativeModelPort,
     private readonly cloudinary: CloudinaryUploadIntentService,
     @Inject(ANALYSIS_QUOTA_PORT) private readonly quota: AnalysisQuotaPort,
     @Inject(ANALYSIS_SESSION_PORT)
@@ -67,6 +68,28 @@ export class SkinAnalysisService {
     private readonly statusPublisher: AnalysisStatusPublisherPort,
   ) {}
 
+  getConsentInfo(): {
+    consentVersion: string;
+    aiProvider: AnalysisProvider;
+    providerName: string;
+    disclosureText: string;
+  } {
+    const aiProvider = this.generativeModel.provider;
+    const providerName = {
+      [AnalysisProvider.Groq]: 'Groq',
+      [AnalysisProvider.OpenAI]: 'OpenAI',
+      [AnalysisProvider.Gemini]: 'Google Gemini',
+      [AnalysisProvider.YouCam]: 'YouCam',
+      [AnalysisProvider.HautAI]: 'Haut.AI',
+    }[aiProvider];
+    return {
+      consentVersion: SkinAnalysisService.CONSENT_VERSION,
+      aiProvider,
+      providerName,
+      disclosureText: `Your facial image will be uploaded to Cloudinary and analyzed by ${providerName} for a cosmetic visual estimate. This is not a medical diagnosis.`,
+    };
+  }
+
   async createUploadIntent(
     userId: Uuid,
     consentAccepted: boolean,
@@ -77,13 +100,19 @@ export class SkinAnalysisService {
     apiKey: string;
     cloudName: string;
     consentVersion: string;
+    aiProvider: AnalysisProvider;
   }> {
     if (!consentAccepted)
       throw new BadRequestException('Skin-analysis consent is required.');
-    return this.cloudinary.createSkinAnalysisUploadIntent(
-      userId,
-      SkinAnalysisService.CONSENT_VERSION,
-    );
+    return this.cloudinary
+      .createSkinAnalysisUploadIntent(
+        userId,
+        SkinAnalysisService.CONSENT_VERSION,
+      )
+      .then((intent) => ({
+        ...intent,
+        aiProvider: this.generativeModel.provider,
+      }));
   }
 
   async analyzeCloudinaryImage(
@@ -99,7 +128,12 @@ export class SkinAnalysisService {
     const fingerprint = createHash('sha256')
       .update(JSON.stringify(confirmation))
       .digest('hex');
-    const claimed = await this.sessions.claimSession(userId, key, fingerprint);
+    const claimed = await this.sessions.claimSession(
+      userId,
+      key,
+      fingerprint,
+      this.generativeModel.provider,
+    );
     if (claimed.fingerprint !== fingerprint)
       throw new ConflictException(
         'Idempotency-Key was used with a different payload.',
@@ -149,13 +183,52 @@ export class SkinAnalysisService {
     attemptNumber = 1,
     maxAttempts = 6,
   ): Promise<void> {
+    const workerStartedAt = Date.now();
     const work = await this.outbox.findPublished(outboxId);
-    if (!work) return;
-    if (!(await this.sessions.markRunning(work.sessionId, work.userId))) return;
+    if (!work) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'analysis_work_not_found',
+          outboxId,
+          attemptNumber,
+        }),
+      );
+      return;
+    }
+    const context = {
+      analysisId: work.sessionId,
+      outboxId,
+      attemptNumber,
+      maxAttempts,
+    };
+    this.logger.log(
+      JSON.stringify({
+        event: 'analysis_attempt_started',
+        ...context,
+        attemptType: attemptNumber <= 3 ? 'AI_PROVIDER' : 'CLEANUP',
+      }),
+    );
+    if (!(await this.sessions.markRunning(work.sessionId, work.userId))) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'analysis_attempt_skipped',
+          ...context,
+          reason: 'SESSION_NOT_CLAIMED',
+        }),
+      );
+      return;
+    }
     await this.publishStatus(work.userId, work.sessionId, 'RUNNING');
 
     if (attemptNumber > 3) {
       try {
+        this.logger.log(
+          JSON.stringify({
+            event: 'analysis_cleanup_started',
+            ...context,
+            errorCode: work.cleanupErrorCode ?? 'ANALYSIS_PROCESSING_FAILED',
+          }),
+        );
         await this.cleanupFailedAnalysis(
           work,
           work.cleanupErrorCode ?? 'ANALYSIS_PROCESSING_FAILED',
@@ -163,6 +236,13 @@ export class SkinAnalysisService {
         await this.quota.finalizeAnalysis(
           work.reservationId,
           work.providerCalled,
+        );
+        this.logger.log(
+          JSON.stringify({
+            event: 'analysis_cleanup_completed',
+            ...context,
+            durationMs: Date.now() - workerStartedAt,
+          }),
         );
       } catch (cleanupError) {
         if (attemptNumber < maxAttempts) {
@@ -180,12 +260,49 @@ export class SkinAnalysisService {
 
     try {
       const image = await this.imageDownloader.download(work.secureUrl);
+      this.logger.log(
+        JSON.stringify({
+          event: 'analysis_image_downloaded',
+          ...context,
+          mimeType: image.mimeType,
+          imageBytes: image.data.byteLength,
+        }),
+      );
       await this.outbox.markProviderCalled(work.id);
-      const generated = await this.gemini.generateContent({
+      const providerStartedAt = Date.now();
+      this.logger.log(
+        JSON.stringify({ event: 'analysis_ai_call_started', ...context }),
+      );
+      const generated = await this.generativeModel.generateContent({
         prompt: SKIN_ANALYSIS_PROMPT,
         image,
       });
+      this.logger.log(
+        JSON.stringify({
+          event: 'analysis_ai_call_completed',
+          ...context,
+          model: generated.model,
+          finishReason: generated.finishReason,
+          responseTextLength: generated.text.length,
+          durationMs: Date.now() - providerStartedAt,
+        }),
+      );
+      this.logger.log(
+        JSON.stringify({
+          event: 'analysis_result_validation_started',
+          ...context,
+        }),
+      );
       const result = validateSkinAnalysisResult(generated.text);
+      this.logger.log(
+        JSON.stringify({
+          event: 'analysis_result_validation_completed',
+          ...context,
+          schemaVersion: result.schemaVersion,
+          observationCount: result.observations.length,
+          durationMs: Date.now() - workerStartedAt,
+        }),
+      );
       if (
         !(await this.persistResult(
           work.sessionId,
@@ -198,12 +315,74 @@ export class SkinAnalysisService {
     } catch (error) {
       if (attemptNumber === 3)
         await this.outbox.markCleanupRequired(work.id, errorCode(error));
+      this.logger.error(
+        JSON.stringify({
+          event: 'analysis_attempt_failed',
+          ...context,
+          errorCode: errorCode(error),
+          errorName: error instanceof Error ? error.name : 'UNKNOWN',
+          errorMessage:
+            error instanceof Error ? error.message : 'Unknown error',
+          willRetry: attemptNumber < maxAttempts,
+          durationMs: Date.now() - workerStartedAt,
+        }),
+      );
       await this.sessions.retrySession(work.sessionId, work.userId);
       await this.publishStatus(work.userId, work.sessionId, 'QUEUED');
       throw error;
     }
     await this.quota.finalizeAnalysis(work.reservationId, true);
     await this.publishStatus(work.userId, work.sessionId, 'SUCCEEDED');
+    this.logger.log(
+      JSON.stringify({
+        event: 'analysis_attempt_succeeded',
+        ...context,
+        durationMs: Date.now() - workerStartedAt,
+      }),
+    );
+  }
+
+  async testAiWithCloudinaryImage(secureUrl: string) {
+    const startedAt = Date.now();
+    this.logger.log(JSON.stringify({ event: 'ai_diagnostic_started' }));
+    const image = await this.imageDownloader.download(secureUrl);
+    this.logger.log(
+      JSON.stringify({
+        event: 'ai_diagnostic_image_downloaded',
+        mimeType: image.mimeType,
+        imageBytes: image.data.byteLength,
+      }),
+    );
+    const generated = await this.generativeModel.generateContent({
+      prompt: SKIN_ANALYSIS_PROMPT,
+      image,
+    });
+    const result = validateSkinAnalysisResult(generated.text);
+    const consentInfo = this.getConsentInfo();
+    const response = {
+      aiProvider: consentInfo.aiProvider,
+      providerName: consentInfo.providerName,
+      model: generated.model,
+      finishReason: generated.finishReason,
+      responseTextLength: generated.text.length,
+      imageMimeType: image.mimeType,
+      imageBytes: image.data.byteLength,
+      durationMs: Date.now() - startedAt,
+      result,
+    };
+    this.logger.log(
+      JSON.stringify({
+        event: 'ai_diagnostic_succeeded',
+        aiProvider: consentInfo.aiProvider,
+        model: generated.model,
+        finishReason: generated.finishReason,
+        responseTextLength: generated.text.length,
+        schemaVersion: result.schemaVersion,
+        observationCount: result.observations.length,
+        durationMs: response.durationMs,
+      }),
+    );
+    return response;
   }
 
   private async cleanupFailedAnalysis(

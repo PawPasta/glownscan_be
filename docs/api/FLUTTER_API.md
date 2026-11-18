@@ -181,14 +181,17 @@ business status. Never log or expose the returned access/refresh tokens.
 | ------ | ------------------------------ | ----------- | ----------------------------------------------------------------------------------------------- |
 | GET    | `/skin-assessments/current`    | Implemented | Load the caller's questionnaire.                                                                |
 | PUT    | `/skin-assessments/current`    | Implemented | Save/update self-reported skin context.                                                         |
+| GET    | `/skin-analysis/consent-info`  | Implemented | Read the current AI provider and exact consent disclosure before showing consent UI.            |
 | POST   | `/skin-analysis/upload-intent` | Implemented | Get a short-lived signed upload intent.                                                         |
 | POST   | `/skin-analysis/analyze`       | Implemented | Submit verified Cloudinary metadata; send `Idempotency-Key`; receives 202 and a queued session. |
 | GET    | `/skin-analysis/:sessionId`    | Implemented | Poll owned analysis status/result.                                                              |
 | GET    | `/skin-analysis?page=&limit=`  | Implemented | Read paginated history.                                                                         |
 | GET    | `/recommendations/me?limit=`   | Implemented | Read matched catalog products from assessment and eligible analysis metrics.                    |
 
-The app must explain that the facial image is stored by Cloudinary and sent to
-Gemini before upload. The upload-intent endpoint requires explicit consent and
+Before presenting consent, call `GET /skin-analysis/consent-info`; display its
+`disclosureText` and retain its `consentVersion` and `aiProvider`. The current
+default provider is Groq. Then submit explicit consent to the upload-intent
+endpoint and verify its returned provider/version still match. The backend
 records the consent version. Analysis is asynchronous; poll status rather than
 keep the create request open.
 
@@ -230,9 +233,19 @@ to 6 unique values from `REDUCE_ACNE`, `EVEN_TONE`, `HYDRATION`, `OIL_CONTROL`,
 { "consentAccepted": true }
 ```
 
-The current consent notice covers Cloudinary storage and Gemini analysis. The
-backend records the notice version. Upload the image using the signed intent
-response, then submit the returned upload metadata to
+`GET /skin-analysis/consent-info` has no body and returns:
+
+```json
+{
+  "consentVersion": "skin-analysis-consent-v3",
+  "aiProvider": "GROQ",
+  "providerName": "Groq",
+  "disclosureText": "Your facial image will be uploaded to Cloudinary and analyzed by Groq for a cosmetic visual estimate. This is not a medical diagnosis."
+}
+```
+
+Show this disclosure and obtain consent before calling
+`POST /skin-analysis/upload-intent`:
 `POST /skin-analysis/analyze`:
 
 ```json
@@ -277,11 +290,15 @@ assessment. GET and PUT otherwise return:
   "signature": "<signature>",
   "apiKey": "<cloudinary-api-key>",
   "cloudName": "<cloud-name>",
-  "consentVersion": "skin-analysis-consent-v1"
+  "consentVersion": "skin-analysis-consent-v3",
+  "aiProvider": "GROQ"
 }
 ```
 
-The create endpoint returns HTTP 202 with `data` shaped as
+The upload-intent response includes the same `aiProvider` and
+`consentVersion` so the client can ensure they still match the displayed
+notice. It also returns the signed upload fields. The create endpoint returns
+HTTP 202 with `data` shaped as
 `{ "sessionId": "<uuid>", "status": "QUEUED" }`. A retry using the same
 user, idempotency key, and payload returns the existing session ID and its
 current status; reusing the key with a different payload returns a conflict.
@@ -336,9 +353,9 @@ rotated/current token. In a multi-instance deployment, keep Socket.IO polling
 requests sticky to one API instance, or configure clients and ingress for
 WebSocket-only transport.
 
-There are at most three Gemini processing attempts, one Gemini request per
+There are at most three AI-provider processing attempts, one provider request per
 attempt, followed by up to three cleanup-only attempts if deletion/purge fails.
-Cleanup attempts do not call Gemini. Once cleanup succeeds, the backend deletes
+Cleanup attempts do not call the AI provider. Once cleanup succeeds, the backend deletes
 the Cloudinary image and analysis result data, retains a minimal `FAILED`
 session for status/history, and sends inbox, email, and FCM notices asking for
 a new upload.

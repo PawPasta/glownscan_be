@@ -175,14 +175,11 @@ export class PaymentService {
 
   async processWebhook(payload: SePayWebhookEvent) {
     const paymentCode = extractPaymentCode(payload);
-    if (!paymentCode)
-      throw new BadRequestException(
-        'SePay webhook does not contain a payment code.',
-      );
     try {
       const notification = await this.paymentData.applySePayPayment({
+        payload,
         eventId: String(payload.id),
-        paymentCode,
+        paymentCode: paymentCode || null,
         transferType: payload.transferType,
         transferAmount: payload.transferAmount,
         adminEmail: this.gateway.adminEmail(),

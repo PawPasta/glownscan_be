@@ -1,5 +1,6 @@
 import type { Uuid } from '../../../../shared/types/domain.types.js';
 import type { PaymentSucceededNotification } from '../../../notification/domain/entities/payment-succeeded-notification.entity.js';
+import type { SePayWebhookEvent } from '../types/sepay-webhook-event.js';
 
 export const PAYMENT_DATA_PORT = Symbol('PAYMENT_DATA_PORT');
 
@@ -134,8 +135,9 @@ export interface PaymentDataPort {
     ttlMinutes: number;
   }): Promise<PaymentOrderRecord>;
   applySePayPayment(input: {
+    payload: SePayWebhookEvent;
     eventId: string;
-    paymentCode: string;
+    paymentCode: string | null;
     transferType: string;
     transferAmount: number;
     adminEmail: string;

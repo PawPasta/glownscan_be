@@ -7,6 +7,7 @@ import type {
   PersistedAnalysisSession,
 } from '../../application/ports/analysis-session.port.js';
 import type { SkinAnalysisResult } from '../../application/types/skin-analysis-result.js';
+import type { AnalysisProvider } from '../../domain/entities/enums/skin-analysis.enums.js';
 
 @Injectable()
 export class PostgresAnalysisSessionAdapter implements AnalysisSessionPort {
@@ -18,16 +19,17 @@ export class PostgresAnalysisSessionAdapter implements AnalysisSessionPort {
     userId: Uuid,
     key: string,
     fingerprint: string,
+    provider: AnalysisProvider,
   ): Promise<{ id: Uuid; created: boolean; fingerprint: string }> {
     return this.database.transaction(async (client) => {
       const inserted = await client.query<{
         id: Uuid;
         request_fingerprint: string;
       }>(
-        `INSERT INTO app_skin_analysis.analysis_sessions (user_id, status, analysis_kind, idempotency_key, request_fingerprint, idempotency_expires_at)
-         VALUES ($1, 'UPLOAD_PENDING', 'INITIAL', $2, $3, CURRENT_TIMESTAMP + INTERVAL '24 hours')
+        `INSERT INTO app_skin_analysis.analysis_sessions (user_id, status, analysis_kind, provider, idempotency_key, request_fingerprint, idempotency_expires_at)
+         VALUES ($1, 'UPLOAD_PENDING', 'INITIAL', $4, $2, $3, CURRENT_TIMESTAMP + INTERVAL '24 hours')
          ON CONFLICT (user_id, idempotency_key) DO NOTHING RETURNING id, request_fingerprint`,
-        [userId, key, fingerprint],
+        [userId, key, fingerprint, provider],
       );
       if (inserted.rowCount === 1)
         return {

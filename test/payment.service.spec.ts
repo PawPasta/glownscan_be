@@ -1,6 +1,9 @@
 import { createHmac } from 'node:crypto';
 import { HttpException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
+import { plainToInstance } from 'class-transformer';
+import { validateSync } from 'class-validator';
+import { SePayWebhookDto } from '../src/modules/payment/presentation/payment.dto.js';
 import type { PaymentDataPort } from '../src/modules/payment/application/ports/payment-data.port.js';
 import type { PaymentGatewayPort } from '../src/modules/payment/application/ports/payment-gateway.port.js';
 import {
@@ -84,6 +87,44 @@ describe('extractPaymentCode', () => {
   });
 });
 
+describe('SePayWebhookDto provider payload', () => {
+  it('accepts and validates the complete TPBank webhook payload', () => {
+    const payload = plainToInstance(SePayWebhookDto, {
+      gateway: 'TPBank',
+      transactionDate: '2026-03-02 18:29:25',
+      accountNumber: '07701221901',
+      subAccount: null,
+      code: null,
+      content: 'QR - GS0123456789ABCDEF0123',
+      transferType: 'in',
+      description: 'BankAPINotify QR - GS0123456789ABCDEF0123',
+      transferAmount: 100000,
+      referenceCode: '272V602260613233',
+      accumulated: 100001,
+      id: 43842569,
+    });
+
+    expect(validateSync(payload)).toEqual([]);
+    expect(payload.id).toBe('43842569');
+  });
+
+  it('still rejects unexpected fields instead of silently dropping data', () => {
+    const payload = plainToInstance(SePayWebhookDto, {
+      id: 1,
+      transferType: 'in',
+      transferAmount: 10_000,
+      unexpectedProviderField: 'value',
+    });
+
+    expect(
+      validateSync(payload, {
+        whitelist: true,
+        forbidNonWhitelisted: true,
+      }).map((error) => error.property),
+    ).toContain('unexpectedProviderField');
+  });
+});
+
 describe('PaymentService webhook notification', () => {
   it('notifies after the persistence port applies a new payment', async () => {
     const notification = {
@@ -105,18 +146,27 @@ describe('PaymentService webhook notification', () => {
       } as never,
     );
 
-    await expect(
-      service.processWebhook({
-        id: 43842569,
-        code: null,
-        content: 'QR - GSABC',
-        description: null,
-        transferType: 'in',
-        transferAmount: 79_000,
-      }),
-    ).resolves.toEqual({ success: true });
+    const payload = {
+      id: 43842569,
+      gateway: 'TPBank',
+      transactionDate: '2026-03-02 18:29:25',
+      accountNumber: '07701221901',
+      subAccount: null,
+      code: null,
+      content: 'QR - GSABC',
+      description: 'BankAPINotify QR - GSABC',
+      transferType: 'in',
+      transferAmount: 79_000,
+      referenceCode: 'reference-123',
+      accumulated: 79_001,
+    };
+
+    await expect(service.processWebhook(payload)).resolves.toEqual({
+      success: true,
+    });
 
     expect(applySePayPayment).toHaveBeenCalledWith({
+      payload,
       eventId: '43842569',
       paymentCode: 'GSABC',
       transferType: 'in',

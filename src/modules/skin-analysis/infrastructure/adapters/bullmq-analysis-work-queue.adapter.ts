@@ -31,7 +31,7 @@ export class BullMqAnalysisWorkQueueAdapter
       { outboxId },
       {
         jobId: outboxId,
-        // Three Gemini processing attempts plus three cleanup/reconciliation attempts.
+        // Three AI-provider processing attempts plus three cleanup/reconciliation attempts.
         attempts: 6,
         backoff: { type: 'exponential', delay: 1_000 },
         removeOnComplete: { age: 86_400, count: 1_000 },

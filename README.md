@@ -7,7 +7,7 @@ provider integrations behind infrastructure adapters.
 ## What is in this repository
 
 - Authentication, profiles, and device registration for website and Flutter.
-- Skin assessment and asynchronous AI skin analysis using Cloudinary, Gemini,
+- Skin assessment and asynchronous AI skin analysis using Cloudinary, Groq,
   Redis, and BullMQ.
 - Product catalog, personalized product matching, routines, and daily progress.
 - SePay/VietQR wallet payments for the `PREMIUM` entitlement.
@@ -26,7 +26,7 @@ Flutter / Website
 NestJS presentation -> application use cases -> ports <- infrastructure adapters
                                                    |          |- PostgreSQL
                                                    |          |- Redis/BullMQ
-                                                   |          |- Cloudinary/Gemini
+                                                   |          |- Cloudinary/Groq
                                                    |          `- Firebase/SMTP
 ```
 

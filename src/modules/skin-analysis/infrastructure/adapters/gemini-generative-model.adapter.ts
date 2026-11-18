@@ -1,14 +1,15 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type {
-  GeminiGenerationRequest,
-  GeminiGenerationResult,
-  GeminiGenerativeModelPort,
-} from '../../application/ports/gemini-generative-model.port.js';
+  GenerationRequest,
+  GenerationResult,
+  GenerativeModelPort,
+} from '../../application/ports/generative-model.port.js';
+import { AnalysisProvider } from '../../domain/entities/enums/skin-analysis.enums.js';
 
 const DEFAULT_GEMINI_API_BASE_URL =
   'https://generativelanguage.googleapis.com/v1beta/models';
-const DEFAULT_GEMINI_REQUEST_TIMEOUT_MS = 60_000;
+const DEFAULT_GEMINI_REQUEST_TIMEOUT_MS = 120_000;
 
 export class GeminiRequestError extends Error {
   constructor(
@@ -22,12 +23,13 @@ export class GeminiRequestError extends Error {
 }
 
 @Injectable()
-export class GeminiGenerativeModelAdapter implements GeminiGenerativeModelPort {
+export class GeminiGenerativeModelAdapter implements GenerativeModelPort {
+  readonly provider = AnalysisProvider.Gemini;
+  private readonly logger = new Logger(GeminiGenerativeModelAdapter.name);
+
   constructor(private readonly config: ConfigService) {}
 
-  async generateContent(
-    request: GeminiGenerationRequest,
-  ): Promise<GeminiGenerationResult> {
+  async generateContent(request: GenerationRequest): Promise<GenerationResult> {
     const apiKey = this.config.get<string>('GLOWNSCAN_GEMINI_API_KEY');
     if (!apiKey?.trim()) {
       throw new Error('GLOWNSCAN_GEMINI_API_KEY is required for Gemini calls.');
@@ -35,7 +37,7 @@ export class GeminiGenerativeModelAdapter implements GeminiGenerativeModelPort {
 
     const model = this.config.get<string>(
       'GLOWNSCAN_GEMINI_MODEL',
-      'gemini-2.5-flash',
+      'gemini-3.8-flash',
     );
     const baseUrl =
       this.config
@@ -79,12 +81,13 @@ export class GeminiGenerativeModelAdapter implements GeminiGenerativeModelPort {
   }
 
   private async requestOnce(
-    request: GeminiGenerationRequest,
+    request: GenerationRequest,
     apiKey: string,
     model: string,
     baseUrl: string,
     timeoutMs: number,
-  ): Promise<GeminiGenerationResult> {
+  ): Promise<GenerationResult> {
+    const startedAt = Date.now();
     let response: Response;
     try {
       response = await fetch(
@@ -116,6 +119,17 @@ export class GeminiGenerativeModelAdapter implements GeminiGenerativeModelPort {
         },
       );
     } catch (error) {
+      this.logger.error(
+        JSON.stringify({
+          event: 'gemini_request_failed',
+          stage: 'http_request',
+          errorCode: 'GEMINI_NETWORK_OR_TIMEOUT',
+          model,
+          durationMs: Date.now() - startedAt,
+          errorName: error instanceof Error ? error.name : 'UNKNOWN',
+          errorMessage: safeErrorMessage(error),
+        }),
+      );
       throw new GeminiRequestError(
         'GEMINI_NETWORK_OR_TIMEOUT',
         true,
@@ -124,6 +138,18 @@ export class GeminiGenerativeModelAdapter implements GeminiGenerativeModelPort {
     }
 
     if (!response.ok) {
+      const responseBody = await response.text().catch(() => '');
+      this.logger.error(
+        JSON.stringify({
+          event: 'gemini_request_failed',
+          stage: 'provider_response',
+          model,
+          httpStatus: response.status,
+          durationMs: Date.now() - startedAt,
+          retryable: response.status === 429 || response.status >= 500,
+          providerError: summarizeProviderError(responseBody),
+        }),
+      );
       const retryAfter = Number(response.headers.get('retry-after'));
       if (response.status === 429 || response.status >= 500) {
         if (Number.isFinite(retryAfter) && retryAfter > 0)
@@ -143,8 +169,50 @@ export class GeminiGenerativeModelAdapter implements GeminiGenerativeModelPort {
       );
     }
 
-    const payload: unknown = await response.json();
-    return this.toGenerationResult(payload, model);
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch (error) {
+      this.logger.error(
+        JSON.stringify({
+          event: 'gemini_response_failed',
+          stage: 'json_decode',
+          model,
+          httpStatus: response.status,
+          durationMs: Date.now() - startedAt,
+          errorMessage: safeErrorMessage(error),
+        }),
+      );
+      throw new Error('Gemini API returned invalid JSON.');
+    }
+    try {
+      const result = this.toGenerationResult(payload, model);
+      this.logger.log(
+        JSON.stringify({
+          event: 'gemini_response_received',
+          httpStatus: response.status,
+          requestedModel: model,
+          responseModel: result.model,
+          finishReason: result.finishReason,
+          generatedTextLength: result.text.length,
+          durationMs: Date.now() - startedAt,
+        }),
+      );
+      return result;
+    } catch (error) {
+      this.logger.error(
+        JSON.stringify({
+          event: 'gemini_response_failed',
+          stage: 'response_validation',
+          httpStatus: response.status,
+          model,
+          durationMs: Date.now() - startedAt,
+          errorMessage: safeErrorMessage(error),
+          ...summarizePayload(payload),
+        }),
+      );
+      throw error;
+    }
   }
 
   private positiveInt(key: string, fallback: number): number {
@@ -157,7 +225,7 @@ export class GeminiGenerativeModelAdapter implements GeminiGenerativeModelPort {
   private toGenerationResult(
     payload: unknown,
     requestedModel: string,
-  ): GeminiGenerationResult {
+  ): GenerationResult {
     if (payload === null || typeof payload !== 'object') {
       throw new Error('Gemini API returned an invalid response.');
     }
@@ -195,6 +263,59 @@ export class GeminiGenerativeModelAdapter implements GeminiGenerativeModelPort {
           : null,
     };
   }
+}
+
+function summarizeProviderError(body: string): Record<string, string> | null {
+  if (!body) return null;
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (!isRecord(parsed) || !isRecord(parsed.error)) return null;
+    return {
+      ...(typeof parsed.error.status === 'string'
+        ? { status: parsed.error.status }
+        : {}),
+      ...(typeof parsed.error.message === 'string'
+        ? { message: redact(parsed.error.message).slice(0, 500) }
+        : {}),
+    };
+  } catch {
+    return { message: redact(body).slice(0, 500) };
+  }
+}
+
+function summarizePayload(payload: unknown): Record<string, unknown> {
+  if (!isRecord(payload)) return { responseShape: typeof payload };
+  const candidates = Array.isArray(payload.candidates)
+    ? payload.candidates
+    : [];
+  const candidate = candidates[0];
+  const finishReason = isRecord(candidate) ? candidate.finishReason : undefined;
+  const promptFeedback = isRecord(payload.promptFeedback)
+    ? payload.promptFeedback
+    : undefined;
+  return {
+    candidateCount: candidates.length,
+    ...(typeof finishReason === 'string' ? { finishReason } : {}),
+    ...(typeof promptFeedback?.blockReason === 'string'
+      ? { blockReason: promptFeedback.blockReason }
+      : {}),
+  };
+}
+
+function safeErrorMessage(error: unknown): string {
+  if (!(error instanceof Error)) return 'Unknown error';
+  return redact(error.message).slice(0, 500);
+}
+
+function redact(value: string): string {
+  return value
+    .replace(/\bAIza[\w-]{20,}\b/g, '[REDACTED_API_KEY]')
+    .replace(/\b([\w-]+)\s*:\s*["']?[^\s,"'}]+/gi, (match, key: string) =>
+      /key|token|secret|credential|authorization/i.test(key)
+        ? `${key}: [REDACTED]`
+        : match,
+    )
+    .replace(/https?:\/\/[^\s"'<>]+/gi, '[REDACTED_URL]');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
