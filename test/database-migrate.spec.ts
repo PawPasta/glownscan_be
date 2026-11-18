@@ -38,7 +38,7 @@ describe('database migrations', () => {
     expect(auth?.sql).toContain('date_of_birth DATE');
     expect(auth?.sql).toContain('gender VARCHAR(30)');
     expect(migrations.map(({ version }) => Number(version))).toEqual([
-      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
     ]);
     expect(migrations.map(({ name }) => name)).toEqual([
       'create_auth_schema',
@@ -56,6 +56,7 @@ describe('database migrations', () => {
       'create_mobile_routine_and_notification_schema',
       'create_skin_analysis_consent_schema',
       'create_package_permission_entitlements',
+      'expand_sepay_webhook_event_payload',
     ]);
     const sessions = migrations.find(({ version }) => Number(version) === 2);
     expect(sessions?.sql).toContain('CREATE TABLE app_auth.auth_sessions');

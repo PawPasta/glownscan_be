@@ -11,6 +11,7 @@ import type {
   SubscriptionSnapshot,
 } from '../../application/ports/payment-data.port.js';
 import type { PaymentSucceededNotification } from '../../../notification/domain/entities/payment-succeeded-notification.entity.js';
+import type { SePayWebhookEvent } from '../../application/types/sepay-webhook-event.js';
 import type { PoolClient } from 'pg';
 
 @Injectable()
@@ -403,23 +404,53 @@ export class PostgresPaymentDataAdapter implements PaymentDataPort {
   }
 
   async applySePayPayment(input: {
+    payload: SePayWebhookEvent;
     eventId: string;
-    paymentCode: string;
+    paymentCode: string | null;
     transferType: string;
     transferAmount: number;
     adminEmail: string;
   }): Promise<PaymentSucceededNotification | null> {
-    if (!['in', 'credit'].includes(input.transferType.toLowerCase()))
-      return null;
     return this.database.transaction(async (client) => {
       const event = await client.query(
         `INSERT INTO app_billing.sepay_webhook_events
-           (sepay_transaction_id, payment_code, amount_vnd)
-         VALUES ($1, $2, $3) ON CONFLICT (sepay_transaction_id) DO NOTHING
+           (sepay_transaction_id, payment_code, amount_vnd, gateway,
+            transaction_date, account_number, sub_account, transfer_type,
+            provider_code, content, description, reference_code,
+            accumulated_vnd, raw_payload)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb)
+         ON CONFLICT (sepay_transaction_id) DO NOTHING
          RETURNING sepay_transaction_id`,
-        [input.eventId, input.paymentCode, input.transferAmount],
+        [
+          input.eventId,
+          input.paymentCode,
+          input.transferAmount,
+          input.payload.gateway ?? null,
+          input.payload.transactionDate ?? null,
+          input.payload.accountNumber ?? null,
+          input.payload.subAccount ?? null,
+          input.transferType,
+          input.payload.code ?? null,
+          input.payload.content ?? null,
+          input.payload.description ?? null,
+          input.payload.referenceCode ?? null,
+          input.payload.accumulated ?? null,
+          JSON.stringify(input.payload),
+        ],
       );
       if (!event.rowCount) return null;
+      if (
+        !['in', 'credit'].includes(input.transferType.toLowerCase()) ||
+        !input.paymentCode
+      ) {
+        await client.query(
+          `UPDATE app_billing.sepay_webhook_events
+           SET processing_result = 'IGNORED'
+           WHERE sepay_transaction_id = $1`,
+          [input.eventId],
+        );
+        return null;
+      }
       const selected = await client.query<PaymentOrderRecord>(
         `SELECT id, user_id, order_type, premium_package, premium_duration_days,
                 amount_vnd, status, payment_code, expires_at
