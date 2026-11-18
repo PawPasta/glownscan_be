@@ -13,6 +13,8 @@ export enum AnalysisKind {
 }
 
 export enum AnalysisProvider {
+  Groq = 'GROQ',
+  OpenAI = 'OPENAI',
   Gemini = 'GEMINI',
   YouCam = 'YOUCAM',
   HautAI = 'HAUT_AI',

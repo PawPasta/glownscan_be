@@ -1,14 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type {
-  GeminiGenerationRequest,
-  GeminiGenerationResult,
-  GeminiGenerativeModelPort,
-} from '../../application/ports/gemini-generative-model.port.js';
+  GenerationRequest,
+  GenerationResult,
+  GenerativeModelPort,
+} from '../../application/ports/generative-model.port.js';
+import { AnalysisProvider } from '../../domain/entities/enums/skin-analysis.enums.js';
 
 const DEFAULT_GEMINI_API_BASE_URL =
   'https://generativelanguage.googleapis.com/v1beta/models';
-const DEFAULT_GEMINI_REQUEST_TIMEOUT_MS = 60_000;
+const DEFAULT_GEMINI_REQUEST_TIMEOUT_MS = 120_000;
 
 export class GeminiRequestError extends Error {
   constructor(
@@ -22,14 +23,13 @@ export class GeminiRequestError extends Error {
 }
 
 @Injectable()
-export class GeminiGenerativeModelAdapter implements GeminiGenerativeModelPort {
+export class GeminiGenerativeModelAdapter implements GenerativeModelPort {
+  readonly provider = AnalysisProvider.Gemini;
   private readonly logger = new Logger(GeminiGenerativeModelAdapter.name);
 
   constructor(private readonly config: ConfigService) {}
 
-  async generateContent(
-    request: GeminiGenerationRequest,
-  ): Promise<GeminiGenerationResult> {
+  async generateContent(request: GenerationRequest): Promise<GenerationResult> {
     const apiKey = this.config.get<string>('GLOWNSCAN_GEMINI_API_KEY');
     if (!apiKey?.trim()) {
       throw new Error('GLOWNSCAN_GEMINI_API_KEY is required for Gemini calls.');
@@ -37,7 +37,7 @@ export class GeminiGenerativeModelAdapter implements GeminiGenerativeModelPort {
 
     const model = this.config.get<string>(
       'GLOWNSCAN_GEMINI_MODEL',
-      'gemini-2.5-flash',
+      'gemini-3.8-flash',
     );
     const baseUrl =
       this.config
@@ -81,12 +81,12 @@ export class GeminiGenerativeModelAdapter implements GeminiGenerativeModelPort {
   }
 
   private async requestOnce(
-    request: GeminiGenerationRequest,
+    request: GenerationRequest,
     apiKey: string,
     model: string,
     baseUrl: string,
     timeoutMs: number,
-  ): Promise<GeminiGenerationResult> {
+  ): Promise<GenerationResult> {
     const startedAt = Date.now();
     let response: Response;
     try {
@@ -225,7 +225,7 @@ export class GeminiGenerativeModelAdapter implements GeminiGenerativeModelPort {
   private toGenerationResult(
     payload: unknown,
     requestedModel: string,
-  ): GeminiGenerationResult {
+  ): GenerationResult {
     if (payload === null || typeof payload !== 'object') {
       throw new Error('Gemini API returned an invalid response.');
     }

@@ -1,7 +1,8 @@
-import type { GeminiGenerativeModelPort } from '../src/modules/skin-analysis/application/ports/gemini-generative-model.port.js';
+import type { GenerativeModelPort } from '../src/modules/skin-analysis/application/ports/generative-model.port.js';
 import { SkinAnalysisService } from '../src/modules/skin-analysis/application/use-case/skin-analysis.service.js';
 import type { CloudinaryUploadIntentService } from '../src/modules/cloudinary/application/use-case/cloudinary-upload-intent.service.js';
 import { NotFoundException } from '../src/shared/handler/http.exceptions.js';
+import { SKIN_ANALYSIS_PROMPT } from '../src/modules/skin-analysis/application/prompts/skin-analysis.prompt.js';
 
 const userId = 'c30d9edf-5a79-45da-ae83-5adf95610727';
 const imageId = '9b829ac2-d13f-4964-83d3-01f7f0ddaa39';
@@ -17,13 +18,13 @@ const confirmation = {
 
 function createService(overrides: Record<string, unknown> = {}) {
   const defaults = {
-    gemini: { generateContent: vi.fn() },
+    gemini: { provider: 'GROQ', generateContent: vi.fn() },
     cloudinary: {
       createSkinAnalysisUploadIntent: vi.fn(),
       confirmSkinAnalysisUpload: vi.fn().mockResolvedValue({
         secureUrl,
         publicId,
-        consentVersion: 'skin-analysis-consent-v1',
+        consentVersion: 'skin-analysis-consent-v3',
       }),
       deleteSkinAnalysisImage: vi.fn().mockResolvedValue(undefined),
     },
@@ -77,7 +78,7 @@ function createService(overrides: Record<string, unknown> = {}) {
   return {
     dependencies,
     service: new SkinAnalysisService(
-      dependencies.gemini as GeminiGenerativeModelPort,
+      dependencies.gemini as GenerativeModelPort,
       dependencies.cloudinary as CloudinaryUploadIntentService,
       dependencies.quota,
       dependencies.sessions,
@@ -123,6 +124,29 @@ function analysisResult() {
 }
 
 describe('SkinAnalysisService', () => {
+  it('runs an admin diagnostic with the production prompt without creating a job', async () => {
+    const { service, dependencies } = createService();
+    const result = analysisResult();
+    dependencies.gemini.generateContent.mockResolvedValue({
+      text: JSON.stringify(result),
+      model: 'gemini-test',
+      finishReason: 'STOP',
+    });
+
+    const response = await service.testAiWithCloudinaryImage(secureUrl);
+
+    expect(dependencies.imageDownloader.download).toHaveBeenCalledWith(
+      secureUrl,
+    );
+    expect(dependencies.gemini.generateContent).toHaveBeenCalledWith({
+      prompt: SKIN_ANALYSIS_PROMPT,
+      image: { mimeType: 'image/jpeg', data: new Uint8Array([1, 2, 3]) },
+    });
+    expect(response).toMatchObject({ model: 'gemini-test', result });
+    expect(dependencies.sessions.claimSession).not.toHaveBeenCalled();
+    expect(dependencies.outbox.markProviderCalled).not.toHaveBeenCalled();
+  });
+
   it('creates a signed upload intent for the authenticated user', async () => {
     const { service, dependencies } = createService();
     dependencies.cloudinary.createSkinAnalysisUploadIntent.mockResolvedValue({
@@ -137,6 +161,7 @@ describe('SkinAnalysisService', () => {
     ).resolves.toMatchObject({
       publicId,
       apiKey: 'test-key',
+      aiProvider: 'GROQ',
     });
   });
 
@@ -166,7 +191,7 @@ describe('SkinAnalysisService', () => {
       {
         secureUrl,
         publicId,
-        consentVersion: 'skin-analysis-consent-v1',
+        consentVersion: 'skin-analysis-consent-v3',
         reservationId: outboxId,
       },
     );

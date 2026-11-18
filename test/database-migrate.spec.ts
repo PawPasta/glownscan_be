@@ -58,6 +58,15 @@ describe('database migrations', () => {
       'create_package_permission_entitlements',
       'expand_sepay_webhook_event_payload',
     ]);
+    const skinAnalysis = migrations.find(
+      ({ version }) => Number(version) === 8,
+    );
+    expect(skinAnalysis?.sql).toContain(
+      "provider VARCHAR(30) NOT NULL DEFAULT 'GROQ'",
+    );
+    expect(skinAnalysis?.sql).toContain(
+      "provider IN ('GROQ', 'OPENAI', 'GEMINI'",
+    );
     const sessions = migrations.find(({ version }) => Number(version) === 2);
     expect(sessions?.sql).toContain('CREATE TABLE app_auth.auth_sessions');
     expect(sessions?.sql).toContain('absolute_expires_at');

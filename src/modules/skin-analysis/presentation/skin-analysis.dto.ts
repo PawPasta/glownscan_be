@@ -37,3 +37,12 @@ export class AnalysisHistoryQueryDto {
   @IsOptional() @IsInt() @Min(1) page = 1;
   @IsOptional() @IsInt() @Min(1) @Max(100) limit = 20;
 }
+
+export class TestAiAnalysisDto {
+  @IsString()
+  @Matches(
+    /^https:\/\/res\.cloudinary\.com\/[a-z0-9_-]+\/image\/upload\/[^?#]+$/i,
+  )
+  @MaxLength(2048)
+  secureUrl!: string;
+}

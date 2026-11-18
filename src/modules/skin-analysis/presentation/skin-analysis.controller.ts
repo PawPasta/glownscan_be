@@ -21,9 +21,11 @@ import {
   AnalysisHistoryQueryDto,
   CreateSkinAnalysisUploadIntentDto,
   ConfirmSkinAnalysisUploadDto,
+  TestAiAnalysisDto,
 } from './skin-analysis.dto.js';
 import { RateLimit } from '../../../shared/rate-limit/rate-limit.decorator.js';
 import { RateLimitGuard } from '../../../shared/rate-limit/rate-limit.guard.js';
+import { AdminGuard } from '../../../shared/security/admin.guard.js';
 import { PaymentService } from '../../payment/application/use-case/payment.service.js';
 import {
   AccessPermissionGuard,
@@ -39,6 +41,23 @@ export class SkinAnalysisController {
     private readonly skinAnalysis: SkinAnalysisService,
     private readonly payment: PaymentService,
   ) {}
+
+  @Get('consent-info')
+  consentInfo() {
+    return this.skinAnalysis.getConsentInfo();
+  }
+
+  @Post(['admin/test-ai', 'admin/test-groq', 'admin/test-gemini'])
+  @UseGuards(AdminGuard, RateLimitGuard)
+  @RateLimit({
+    scope: 'skin-analysis-ai-diagnostic',
+    key: 'IP',
+    limit: 3,
+    windowSeconds: 300,
+  })
+  testAi(@Body() body: TestAiAnalysisDto) {
+    return this.skinAnalysis.testAiWithCloudinaryImage(body.secureUrl);
+  }
 
   @Post('upload-intent')
   @UseGuards(AccessPermissionGuard, RateLimitGuard)

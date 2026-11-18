@@ -7,12 +7,12 @@ export function parseSkinAnalysisResult(text: string): SkinAnalysisResult {
     value = JSON.parse(text);
   } catch {
     throw new UnprocessableEntityException(
-      'Gemini returned invalid JSON for the skin analysis.',
+      'AI provider returned invalid JSON for the skin analysis.',
     );
   }
   if (!isSkinAnalysisResult(value)) {
     throw new UnprocessableEntityException(
-      'Gemini returned a skin analysis with an invalid structure.',
+      'AI provider returned a skin analysis with an invalid structure.',
     );
   }
   return value;

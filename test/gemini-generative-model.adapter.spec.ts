@@ -109,6 +109,28 @@ describe('GeminiGenerativeModelAdapter', () => {
     );
   });
 
+  it('defaults Gemini requests to a 2-minute timeout', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: '{"ok":true}' }] } }],
+        }),
+        { status: 200 },
+      ),
+    );
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    const adapter = new GeminiGenerativeModelAdapter(
+      new ConfigService({ GLOWNSCAN_GEMINI_API_KEY: 'test-key' }),
+    );
+
+    await adapter.generateContent({
+      prompt: 'Analyze.',
+      image: { mimeType: 'image/jpeg', data: Buffer.from('image') },
+    });
+
+    expect(timeout).toHaveBeenCalledWith(120_000);
+  });
+
   it('logs and rejects a successful HTTP response with invalid JSON', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response('{not-json', { status: 200 }),
