@@ -170,7 +170,7 @@ routes normally return HTTP 201 and message `Created successfully`).
 | `GET /auth/profile`, `PATCH /auth/profile`, `POST /auth/profile/avatar/confirm`                                                                                                                                  | `{ "profile": { "id": "<uuid>", "userId": "<uuid>", "fullName": "Nguyen An", "avatarUrl": "https://...", "dateOfBirth": "1998-04-12", "gender": "PREFER_NOT_TO_SAY", "createdAt": "<ISO-8601>", "updatedAt": "<ISO-8601>" } }`; nullable profile fields may be `null`. |
 | `POST /auth/profile/avatar/upload-intent`                                                                                                                                                                        | `{ "publicId": "glownscan/avatars/...", "timestamp": 1234567890, "signature": "<signature>", "apiKey": "<cloudinary-api-key>", "cloudName": "<cloud-name>" }`                                                                                                          |
 | `PUT /devices/me`                                                                                                                                                                                                | `{ "installationId": "<stable-installation-id>", "registered": true, "updatedAt": "<ISO-8601>" }`                                                                                                                                                                      |
-| `DELETE /devices/me`                                                                                                                                                                                             | No response data (`undefined`; JSON serialization omits the `data` field).                                                                                                                                                                                             |
+| `DELETE /devices/me`                                                                                                                                                                                             | `{ "message": "Device notifications have been disabled." }`                                                                                                                                                                                                          |
 
 The API response envelope's `status` is the HTTP status code, not a separate
 business status. Never log or expose the returned access/refresh tokens.
@@ -245,8 +245,8 @@ to 6 unique values from `REDUCE_ACNE`, `EVEN_TONE`, `HYDRATION`, `OIL_CONTROL`,
 ```
 
 Show this disclosure and obtain consent before calling
-`POST /skin-analysis/upload-intent`:
-`POST /skin-analysis/analyze`:
+`POST /skin-analysis/upload-intent`. After uploading the image to Cloudinary,
+call `POST /skin-analysis/analyze` with the verified upload metadata:
 
 ```json
 {
